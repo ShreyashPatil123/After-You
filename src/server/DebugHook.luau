@@ -9,7 +9,7 @@
 	  Invoke("Force", eventIdOrPacing)     -> DirectorService:Force; true if the event actually played
 	  Invoke("Door", openingId)            -> open a door, or cut plastic sheeting, instantly
 	  Invoke("Wear", cellId, amount)       -> WearService:Add
-	  Invoke("Wake")                       -> LodgerService:Wake(first player, true)
+	  Invoke("Wake")                       -> LodgerService:Wake(first player, true) -> ok, reason
 	Never created outside Studio.
 ]]
 local CollectionService = game:GetService("CollectionService")
@@ -20,6 +20,7 @@ local ServerStorage = game:GetService("ServerStorage")
 local Shared = game:GetService("ReplicatedStorage"):WaitForChild("Shared")
 local LevelLayout = require(Shared.Config.LevelLayout)
 local LayoutSpace = require(Shared.Util.LayoutSpace)
+local EchoCodec = require(Shared.Logic.EchoCodec)
 
 local DebugHook = {}
 
@@ -105,6 +106,8 @@ function DebugHook.Install(registry: { [string]: any })
 			if door:GetAttribute("Kind") == "Plastic" and door.PrimaryPart then
 				door.PrimaryPart.Transparency = 1
 			end
+			-- Logged like a real use, so DoorReplay has something to replay.
+			registry.InteractionService.Action:Fire(p, EchoCodec.ActionKind.DoorOpen, a)
 			return "ok"
 		elseif cmd == "Wear" then
 			registry.WearService:Add(a, b)

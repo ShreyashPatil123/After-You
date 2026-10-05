@@ -47,6 +47,7 @@ local lastKnown: Vector3? = nil
 local noise = 0 -- loudest attenuated noise heard since last tick
 local withdrawUntil = 0
 local withdrawGiveUpAt = 0
+local withdrawHardAt = 0
 
 local TICK = 0.15
 local Cfg = LodgerConfig
@@ -334,13 +335,13 @@ end
 	Wakes the Lodger to hunt `p`. It appears inside an echo of p's own route, in a worn cell,
 	somewhere p can see (first meeting) or out of sight (later). Returns false if nowhere fits.
 ]]
-function LodgerService:Wake(p: Player, first: boolean): boolean
+function LodgerService:Wake(p: Player, first: boolean): (boolean, string?)
 	if brain.State ~= "Dormant" then
-		return false
+		return false, "already awake"
 	end
 	local head = PlayerService:GetHead(p)
 	if not head then
-		return false
+		return false, "no character"
 	end
 	local wantVisible = first
 	local ago = EchoService:FindVisibleStretch(
@@ -360,15 +361,15 @@ function LodgerService:Wake(p: Player, first: boolean): boolean
 		nil
 	)
 	if not ago then
-		return false
+		return false, "no recorded walk in worn cells at the right age and distance"
 	end
 	local path = EchoService:Segment(p, ago, 14)
 	if not path or #path.Samples < 4 then
-		return false
+		return false, "echo segment too short"
 	end
 	local s1 = path.Samples[1]
 	if not spawnRig(p, LayoutSpace.ToWorld(s1.X, s1.Y, s1.Z)) then
-		return false
+		return false, "rig spawn failed"
 	end
 	target = p
 	LodgerBrain.Wake(brain)
@@ -434,6 +435,19 @@ local function withdrawRoute(): { Vector3 }
 			end
 		end
 	end
+	if not best then
+		-- Every worn cell is in view: at least walk away down the worn route.
+		for _, id in CellService.Graph.Order do
+			if id ~= myCell and canEnter(id) and reachable(myCell, id) then
+				local r = CellService.Graph.Cells[id].Rect
+				local centre = LayoutSpace.ToWorld((r[1] + r[3]) / 2, 3, (r[2] + r[4]) / 2)
+				local score = (centre - from).Magnitude
+				if score > bestScore then
+					best, bestScore = centre, score
+				end
+			end
+		end
+	end
 	return if best then computePath(best) or {} else {}
 end
 
@@ -461,6 +475,7 @@ local function enterState(s: string)
 		end
 		withdrawUntil = os.clock() + 8
 		withdrawGiveUpAt = os.clock() + Cfg.WithdrawGiveUpSeconds
+		withdrawHardAt = os.clock() + Cfg.WithdrawMaxSeconds
 		setRoute(withdrawRoute())
 		HorrorEventService:RestoreLights()
 	elseif s == "Take" then
@@ -479,8 +494,13 @@ local function enterState(s: string)
 			end)
 		end
 		task.delay(1.5, function()
-			LodgerBrain.Finish(brain) -- Take -> Withdraw
-			enterState("Withdraw")
+			-- Gone while the victim's screen is black, so they never respawn staring at it.
+			if brain.State == "Take" then
+				LodgerBrain.Finish(brain) -- Take -> Withdraw
+				LodgerBrain.Finish(brain) -- Withdraw -> Dormant
+				HorrorEventService:RestoreLights()
+				enterState("Dormant")
+			end
 		end)
 	elseif s == "Dormant" then
 		local t = target
@@ -556,7 +576,8 @@ local function tick(dt: number)
 					-- Never stand frozen in plain view: past the give-up time it leaves when nobody is looking.
 					or (os.clock() > withdrawGiveUpAt and not anyoneLookingAtMe())
 				)
-			),
+			)
+			or ((brain.State :: string) == "Withdraw" and os.clock() > withdrawHardAt),
 	}, Cfg)
 	noise = 0
 	if changed then

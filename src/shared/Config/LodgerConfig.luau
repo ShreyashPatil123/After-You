@@ -14,6 +14,7 @@ return {
 	DeviateHoldSeconds = 2.2,
 	SearchSeconds = 12,
 	WithdrawGiveUpSeconds = 20, -- after this, a withdrawing Lodger may vanish while seen but not looked at
+	WithdrawMaxSeconds = 30, -- hard cap: despawns even if watched (no route out of sight exists)
 	MimicDeviateDistance = 45, -- end of a mimic route this close to the target: it turns to face them
 	LoseSightSeconds = 4,
 	-- Menace gauge (Alien: Isolation pattern). Rises while near/visible, forces Withdraw when full.
