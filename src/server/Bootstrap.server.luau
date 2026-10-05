@@ -3,10 +3,11 @@
 local Shared = game:GetService("ReplicatedStorage"):WaitForChild("Shared")
 local Loader = require(Shared.Util.Loader)
 local Net = require(Shared.Net)
+local DebugHook = require(script.Parent.DebugHook)
 
 Net.Init()
 
-Loader.Run(script.Parent.Services, {
+local registry = Loader.Run(script.Parent.Services, {
 	"GreyboxBuilder",
 	"AnalyticsService",
 	"PlayerService",
@@ -19,3 +20,5 @@ Loader.Run(script.Parent.Services, {
 	"LodgerService",
 	"DirectorService",
 })
+
+DebugHook.Install(registry)
