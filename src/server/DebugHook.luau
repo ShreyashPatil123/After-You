@@ -6,7 +6,8 @@
 	  Invoke("Teleport", target)           -> move the first player to a cell id or layout point id
 	  Invoke("Walk", cellId)               -> Humanoid:MoveTo the centre of a cell (wear accrues normally)
 	  Invoke("Use", pointId)               -> act as if the first player used that interactable
-	  Invoke("Force", eventIdOrPacing)     -> DirectorService:Force
+	  Invoke("Force", eventIdOrPacing)     -> DirectorService:Force; true if the event actually played
+	  Invoke("Door", openingId)            -> open a door, or cut plastic sheeting, instantly
 	  Invoke("Wear", cellId, amount)       -> WearService:Add
 	  Invoke("Wake")                       -> LodgerService:Wake(first player, true)
 	Never created outside Studio.
@@ -94,7 +95,16 @@ function DebugHook.Install(registry: { [string]: any })
 			end
 			return "no interactable " .. tostring(a)
 		elseif cmd == "Force" then
-			registry.DirectorService:Force(p, a)
+			return registry.DirectorService:Force(p, a)
+		elseif cmd == "Door" then
+			local door = registry.InteractionService:FindDoor(a)
+			if not door then
+				return "no door " .. tostring(a)
+			end
+			registry.InteractionService:SetDoorOpen(door, true)
+			if door:GetAttribute("Kind") == "Plastic" and door.PrimaryPart then
+				door.PrimaryPart.Transparency = 1
+			end
 			return "ok"
 		elseif cmd == "Wear" then
 			registry.WearService:Add(a, b)

@@ -46,6 +46,7 @@ local lastRepath = 0
 local lastKnown: Vector3? = nil
 local noise = 0 -- loudest attenuated noise heard since last tick
 local withdrawUntil = 0
+local withdrawGiveUpAt = 0
 
 local TICK = 0.15
 local Cfg = LodgerConfig
@@ -386,6 +387,56 @@ function LodgerService:Wake(p: Player, first: boolean): boolean
 	return true
 end
 
+local function visibleToAnyone(at: Vector3): boolean
+	for _, p in Players:GetPlayers() do
+		if HorrorEventService.VisibleFrom(p, at) then
+			return true
+		end
+	end
+	return false
+end
+
+local function anyoneLookingAtMe(): boolean
+	for _, p in Players:GetPlayers() do
+		if lookingAtMe(p) then
+			return true
+		end
+	end
+	return false
+end
+
+--[[
+	Where to go when backing off. Home (the laundry) is often clean dust it can't reach, so the
+	fallback is the reachable worn cell farthest from the target whose centre nobody can see.
+]]
+local function withdrawRoute(): { Vector3 }
+	local home = CollectionService:GetTagged("LodgerHome")[1] :: BasePart?
+	local pts = if home then computePath(home.Position) else nil
+	if pts then
+		return pts
+	end
+	if not root then
+		return {}
+	end
+	local myCell = cellOf(root.Position)
+	local tRoot = if target then PlayerService:GetRoot(target) else nil
+	local from = if tRoot then tRoot.Position else root.Position
+	local best: Vector3?, bestScore = nil, -math.huge
+	for _, id in CellService.Graph.Order do
+		if id ~= myCell and canEnter(id) and reachable(myCell, id) then
+			local r = CellService.Graph.Cells[id].Rect
+			local centre = LayoutSpace.ToWorld((r[1] + r[3]) / 2, 3, (r[2] + r[4]) / 2)
+			if not visibleToAnyone(centre) then
+				local score = (centre - from).Magnitude
+				if score > bestScore then
+					best, bestScore = centre, score
+				end
+			end
+		end
+	end
+	return if best then computePath(best) or {} else {}
+end
+
 local function enterState(s: string)
 	if rig then
 		rig:SetAttribute("State", s)
@@ -409,9 +460,8 @@ local function enterState(s: string)
 			humanoid.WalkSpeed = Cfg.WalkSpeed
 		end
 		withdrawUntil = os.clock() + 8
-		local home = CollectionService:GetTagged("LodgerHome")[1] :: BasePart?
-		local pts = if home then computePath(home.Position) else nil
-		setRoute(pts or {})
+		withdrawGiveUpAt = os.clock() + Cfg.WithdrawGiveUpSeconds
+		setRoute(withdrawRoute())
 		HorrorEventService:RestoreLights()
 	elseif s == "Take" then
 		stopMoving()
@@ -451,18 +501,6 @@ local function faceTarget()
 			root.CFrame = CFrame.lookAt(root.Position, flat)
 		end
 	end
-end
-
-local function visibleToAnyone(): boolean
-	if not root then
-		return false
-	end
-	for _, p in Players:GetPlayers() do
-		if HorrorEventService.VisibleFrom(p, root.Position) then
-			return true
-		end
-	end
-	return false
 end
 
 local function tick(dt: number)
@@ -513,7 +551,11 @@ local function tick(dt: number)
 			or (
 				(brain.State :: string) == "Withdraw"
 				and os.clock() > withdrawUntil
-				and not visibleToAnyone()
+				and (
+					not visibleToAnyone(root.Position)
+					-- Never stand frozen in plain view: past the give-up time it leaves when nobody is looking.
+					or (os.clock() > withdrawGiveUpAt and not anyoneLookingAtMe())
+				)
 			),
 	}, Cfg)
 	noise = 0

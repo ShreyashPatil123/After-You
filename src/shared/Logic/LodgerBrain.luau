@@ -83,7 +83,8 @@ function LodgerBrain.Step(b: Brain, s: Snapshot, cfg: any): State?
 		if noticed or s.HeardLoudness >= 0.5 then
 			enter(b, "Deviate")
 		elseif s.RouteDone then
-			if s.TargetVisible then
+			-- The echo's route ran out near the player: it stops and turns to them (the deviation beat).
+			if s.TargetVisible or s.TargetDistance <= cfg.MimicDeviateDistance then
 				enter(b, "Deviate")
 			else
 				enter(b, "Withdraw")

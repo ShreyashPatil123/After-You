@@ -170,16 +170,14 @@ local function debugPush(now: number)
 end
 
 -- Studio-only: lets the debug overlay force an event or a pacing state while tuning.
-function DirectorService:Force(p: Player, what: string)
+function DirectorService:Force(p: Player, what: string): boolean
 	local s = stateFor(p)
 	if what == "Build" or what == "Peak" or what == "Relax" or what == "Fade" then
 		PacingModel.Enter(s.Pacing, what :: any, DirectorConfig, roll)
-	else
-		local def = HorrorEventService:Get(what)
-		if def then
-			HorrorEventService:Play(p, def)
-		end
+		return true
 	end
+	local def = HorrorEventService:Get(what)
+	return def ~= nil and HorrorEventService:Play(p, def)
 end
 
 function DirectorService:Init(registry)
