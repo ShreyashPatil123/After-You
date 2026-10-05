@@ -23,6 +23,7 @@ return {
 	MenaceNearDistance = 30,
 	MenaceWithdrawAt = 1.0,
 	RepathSeconds = 0.6,
+	CleanCellPathCost = 1e6, -- pathfinding cost of a cell with too little wear to enter
 	-- Mimic: walk a player's echo route recorded this long ago.
 	MimicDelaySeconds = 60,
 }

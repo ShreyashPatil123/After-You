@@ -360,6 +360,7 @@ return {
 	MenaceNearDistance = 30,
 	MenaceWithdrawAt = 1.0,
 	RepathSeconds = 0.6,
+	CleanCellPathCost = 1e6, -- pathfinding cost of a cell with too little wear to enter
 	-- Mimic: walk a player's echo route recorded this long ago.
 	MimicDelaySeconds = 60,
 }
@@ -2524,6 +2525,9 @@ local DW = Layout.DoorWidth
 local DH = Layout.DoorHeight
 
 local VOLUME_GROUP = "CellVolume"
+-- Pathfinding rasterises modifier volumes onto a coarse voxel grid, so a volume flush with a wall
+-- bleeds into the room next door. Insetting keeps a clean room's label out of the corridor beside it.
+local VOLUME_INSET = 2
 local WALL_COLOR = Color3.fromRGB(150, 150, 142)
 local CEIL_COLOR = Color3.fromRGB(110, 110, 106)
 
@@ -2620,7 +2624,12 @@ local function buildCell(map: Instance, c: any)
 
 	-- Invisible volume carrying the pathfinding label. LodgerService prices each label by wear,
 	-- which is how "it only walks where someone has walked" reaches PathfindingService.
-	local vol = part(model, "Volume", Vector3.new(sx, H, sz), CFrame.new(w(cx, H / 2, cz)))
+	local vol = part(
+		model,
+		"Volume",
+		Vector3.new(math.max(1, sx - 2 * VOLUME_INSET), H, math.max(1, sz - 2 * VOLUME_INSET)),
+		CFrame.new(w(cx, H / 2, cz))
+	)
 	vol.Transparency = 1
 	vol.CanCollide = false
 	vol.CanTouch = false
@@ -3483,7 +3492,9 @@ end
 local function costs(): { [string]: number }
 	local c: { [string]: number } = {}
 	for _, id in CellService.Graph.Order do
-		c["Cell_" .. id] = if canEnter(id) then 1 else math.huge
+		-- Large but finite: an infinite cost next to a corridor could block the corridor itself.
+		-- followRoute still refuses to step into a cell the Lodger may not enter.
+		c["Cell_" .. id] = if canEnter(id) then 1 else Cfg.CleanCellPathCost
 	end
 	return c
 end
@@ -3733,7 +3744,8 @@ end
 ]]
 local function withdrawRoute(): { Vector3 }
 	local home = CollectionService:GetTagged("LodgerHome")[1] :: BasePart?
-	local pts = if home then computePath(home.Position) else nil
+	local homeCell = if home then cellOf(home.Position) else nil
+	local pts = if home and homeCell and canEnter(homeCell) then computePath(home.Position) else nil
 	if pts then
 		return pts
 	end

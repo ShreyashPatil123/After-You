@@ -162,7 +162,9 @@ end
 local function costs(): { [string]: number }
 	local c: { [string]: number } = {}
 	for _, id in CellService.Graph.Order do
-		c["Cell_" .. id] = if canEnter(id) then 1 else math.huge
+		-- Large but finite: an infinite cost next to a corridor could block the corridor itself.
+		-- followRoute still refuses to step into a cell the Lodger may not enter.
+		c["Cell_" .. id] = if canEnter(id) then 1 else Cfg.CleanCellPathCost
 	end
 	return c
 end
@@ -412,7 +414,8 @@ end
 ]]
 local function withdrawRoute(): { Vector3 }
 	local home = CollectionService:GetTagged("LodgerHome")[1] :: BasePart?
-	local pts = if home then computePath(home.Position) else nil
+	local homeCell = if home then cellOf(home.Position) else nil
+	local pts = if home and homeCell and canEnter(homeCell) then computePath(home.Position) else nil
 	if pts then
 		return pts
 	end

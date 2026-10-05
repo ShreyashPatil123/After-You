@@ -22,6 +22,9 @@ local DW = Layout.DoorWidth
 local DH = Layout.DoorHeight
 
 local VOLUME_GROUP = "CellVolume"
+-- Pathfinding rasterises modifier volumes onto a coarse voxel grid, so a volume flush with a wall
+-- bleeds into the room next door. Insetting keeps a clean room's label out of the corridor beside it.
+local VOLUME_INSET = 2
 local WALL_COLOR = Color3.fromRGB(150, 150, 142)
 local CEIL_COLOR = Color3.fromRGB(110, 110, 106)
 
@@ -118,7 +121,12 @@ local function buildCell(map: Instance, c: any)
 
 	-- Invisible volume carrying the pathfinding label. LodgerService prices each label by wear,
 	-- which is how "it only walks where someone has walked" reaches PathfindingService.
-	local vol = part(model, "Volume", Vector3.new(sx, H, sz), CFrame.new(w(cx, H / 2, cz)))
+	local vol = part(
+		model,
+		"Volume",
+		Vector3.new(math.max(1, sx - 2 * VOLUME_INSET), H, math.max(1, sz - 2 * VOLUME_INSET)),
+		CFrame.new(w(cx, H / 2, cz))
+	)
 	vol.Transparency = 1
 	vol.CanCollide = false
 	vol.CanTouch = false
