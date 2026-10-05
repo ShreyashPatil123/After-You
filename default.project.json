@@ -1,0 +1,37 @@
+{
+  "name": "AfterYou",
+  "tree": {
+    "$className": "DataModel",
+    "ReplicatedStorage": {
+      "Shared": { "$path": "src/shared" }
+    },
+    "ServerScriptService": {
+      "Server": { "$path": "src/server" }
+    },
+    "StarterPlayer": {
+      "StarterPlayerScripts": {
+        "Client": { "$path": "src/client" }
+      },
+      "$properties": {
+        "CameraMode": "LockFirstPerson",
+        "CharacterWalkSpeed": 10,
+        "CharacterJumpPower": 0,
+        "CharacterUseJumpPower": true
+      }
+    },
+    "Workspace": {
+      "$properties": { "FilteringEnabled": true }
+    },
+    "Lighting": {
+      "$properties": {
+        "Ambient": [0.02, 0.02, 0.025],
+        "OutdoorAmbient": [0.03, 0.03, 0.035],
+        "Brightness": 0,
+        "ClockTime": 0,
+        "GlobalShadows": true,
+        "EnvironmentDiffuseScale": 0,
+        "EnvironmentSpecularScale": 0.1
+      }
+    }
+  }
+}

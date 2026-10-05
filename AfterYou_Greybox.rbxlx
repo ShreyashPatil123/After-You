@@ -1,0 +1,5930 @@
+<roblox version="4">
+  <Item class="Lighting" referent="0">
+    <Properties>
+      <string name="Name">Lighting</string>
+      <Color3 name="Ambient">
+        <R>0.02</R>
+        <G>0.02</G>
+        <B>0.025</B>
+      </Color3>
+      <float name="Brightness">0</float>
+      <float name="ClockTime">0</float>
+      <float name="EnvironmentDiffuseScale">0</float>
+      <float name="EnvironmentSpecularScale">0.1</float>
+      <bool name="GlobalShadows">true</bool>
+      <Color3 name="OutdoorAmbient">
+        <R>0.03</R>
+        <G>0.03</G>
+        <B>0.035</B>
+      </Color3>
+    </Properties>
+  </Item>
+  <Item class="ReplicatedStorage" referent="1">
+    <Properties>
+      <string name="Name">ReplicatedStorage</string>
+    </Properties>
+    <Item class="Folder" referent="2">
+      <Properties>
+        <string name="Name">Shared</string>
+      </Properties>
+      <Item class="Folder" referent="3">
+        <Properties>
+          <string name="Name">Config</string>
+        </Properties>
+        <Item class="ModuleScript" referent="4">
+          <Properties>
+            <string name="Name">AssetIds</string>
+            <string name="Source"><![CDATA[--!strict
+-- Every asset reference lives here. Empty string = not sourced yet; callers skip it.
+-- rbxasset:// paths ship with the Roblox client and need no upload.
+return {
+	Sounds = {
+		FootstepLino = "rbxasset://sounds/action_footsteps_plastic.mp3",
+		FootstepConcrete = "rbxasset://sounds/action_footsteps_plastic.mp3",
+		FootstepWater = "rbxasset://sounds/action_footsteps_plastic.mp3",
+		DoorOpen = "",
+		DoorClose = "",
+		DoorKnock = "",
+		FlashlightClick = "",
+		Breath = "",
+		LodgerInhale = "",
+		FluorescentHum = "",
+		RoomTone = "",
+		Rain = "",
+		LiftPower = "",
+	},
+	Animations = {
+		-- Default R15 walk; confirm id in Studio (S5).
+		Walk = "rbxassetid://507777826",
+	},
+	Decals = {
+		Footprint = "",
+	},
+}
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="5">
+          <Properties>
+            <string name="Name">AudioConfig</string>
+            <string name="Source"><![CDATA[--!strict
+-- Mix buses and per-sound defaults. Volumes are linear.
+return {
+	Buses = {
+		Ambience = 0.6,
+		World = 1.0,
+		Player = 0.8,
+		Echo = 0.85,
+		Lodger = 1.0,
+		UI = 0.7,
+	},
+	-- Distance attenuation curves: {[distance] = volume}
+	Curves = {
+		Default = { [0] = 1, [10] = 0.7, [40] = 0.25, [90] = 0 },
+		Footstep = { [0] = 1, [6] = 0.6, [30] = 0.15, [60] = 0 },
+		Far = { [0] = 1, [30] = 0.6, [120] = 0.15, [200] = 0 },
+	},
+	AcousticSimulation = true,
+	-- Fallback occlusion when acoustic simulation is off: low-pass when the ray to the emitter is blocked.
+	OcclusionFallback = { CheckSeconds = 0.25, BlockedFrequency = 900, OpenFrequency = 20000 },
+}
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="6">
+          <Properties>
+            <string name="Name">DirectorConfig</string>
+            <string name="Source"><![CDATA[--!strict
+-- Pacing. See §J. Times in seconds.
+return {
+	TickSeconds = 1,
+	States = {
+		Relax = { MinSeconds = 45, MaxSeconds = 90 },
+		Build = { MaxSeconds = 240 },
+		Peak = { MaxSeconds = 60 },
+		Fade = { MinSeconds = 20, MaxSeconds = 35 },
+	},
+	BuildToPeakTension = 60,
+	TensionDecayPerSecond = 0.6,
+	TensionFromRunPerSecond = 1.5,
+	TensionFromDarkPerSecond = 0.2,
+	TensionFromLodgerNearPerSecond = 6,
+	-- Event spacing.
+	MinSecondsBetweenEvents = 20,
+	MinSecondsBetweenMajor = 240, -- intensity >= 4
+	MajorIntensity = 4,
+	PostDeathRelaxSeconds = 90,
+	RecentCategoryPenalty = 0.35, -- weight multiplier per recent play of the same category
+	RecentWindowSeconds = 300,
+}
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="7">
+          <Properties>
+            <string name="Name">EchoConfig</string>
+            <string name="Source"><![CDATA[--!strict
+-- Recording and replay of player history. See §D.2.
+return {
+	SampleHz = 4,
+	-- How much history each player keeps (seconds).
+	HistorySeconds = 360,
+	-- Echoes replay a slice of history recorded between these many seconds ago.
+	MinDelaySeconds = 45,
+	MaxDelaySeconds = 240,
+	-- Positions are quantised to this many studs before sending.
+	Quantum = 0.25,
+	-- Figure echo visuals.
+	FigureTransparency = 0.35,
+	FigureMaxDistance = 140,
+	-- "Behind you" footsteps lag the player by this many seconds.
+	BehindYouLagSeconds = 1.0,
+}
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="8">
+          <Properties>
+            <string name="Name">LevelLayout</string>
+            <string name="Source"><![CDATA[--!strict
+--[[
+	Floor 4 East greybox layout (VERTICAL_SLICE_SPEC.md §1), as plain data so it can be
+	unit-tested outside Roblox. Units are studs, floor at Y = 0. Rects are {x0, z0, x1, z1}.
+
+	Openings sit on a cell edge. Axis = which coordinate the wall is perpendicular to:
+	  Axis "Z": wall runs along X at z = At, opening centred on x = Center.
+	  Axis "X": wall runs along Z at x = At, opening centred on z = Center.
+	Kinds:
+	  Door    - hinged door, starts closed
+	  Arch    - open gap, no door
+	  Plastic - sealed with plastic sheeting; hold to cut, then an open gap
+	  Lift    - lift doors, locked until power is restored
+	  Fake    - door slab on a solid wall (knockable, never opens)
+]]
+
+export type Rect = { number }
+export type CellDef = { Id: string, Rect: Rect, Tags: { string }?, FloorColor: { number }? }
+export type OpeningDef = {
+	Id: string,
+	Kind: "Door" | "Arch" | "Plastic" | "Lift" | "Fake",
+	Cells: { string },
+	Axis: "X" | "Z",
+	At: number,
+	Center: number,
+	Width: number?,
+	Label: string?,
+}
+export type WallDef = { Axis: "X" | "Z", At: number, From: number, To: number, Cell: string }
+export type PointDef = { Id: string, Kind: string, Cell: string, Pos: { number }, Data: { [string]: any }? }
+
+local Layout = {}
+
+Layout.Height = 11
+Layout.WallThickness = 0.5
+Layout.DoorWidth = 5
+Layout.DoorHeight = 8
+Layout.Origin = { 0, 100, 0 } -- whole floor is built at this offset (floor 4 sits above ground)
+
+Layout.Cells = {
+	{ Id = "StairA", Rect = { -12, 0, 0, 9 }, Tags = { "Stair" }, FloorColor = { 90, 90, 88 } },
+	{ Id = "CorrW", Rect = { 0, 0, 60, 9 }, Tags = { "LongCorridor" }, FloorColor = { 70, 92, 74 } },
+	{ Id = "CorrE", Rect = { 60, 0, 120, 9 }, Tags = { "LongCorridor" }, FloorColor = { 70, 92, 74 } },
+	{ Id = "Lobby", Rect = { 120, 0, 132, 9 }, Tags = { "LiftLobby" }, FloorColor = { 80, 80, 80 } },
+	{ Id = "Lift", Rect = { 132, 1.5, 138, 7.5 }, Tags = { "Lift" }, FloorColor = { 60, 60, 64 } },
+	{ Id = "R4B", Rect = { 24, 9, 44, 29 }, Tags = { "Apartment" }, FloorColor = { 96, 82, 66 } },
+	{ Id = "Laundry", Rect = { 64, 9, 84, 29 }, Tags = { "Laundry", "Noisy" }, FloorColor = { 84, 86, 90 } },
+	{ Id = "R4D", Rect = { 90, 9, 112, 29 }, Tags = { "Apartment", "Sealed" }, FloorColor = { 96, 82, 66 } },
+	{ Id = "R4E", Rect = { 40, -20, 80, 0 }, Tags = { "Apartment", "Water" }, FloorColor = { 52, 64, 76 } },
+	{ Id = "Closet", Rect = { 100, -10, 112, 0 }, Tags = { "Closet" }, FloorColor = { 80, 76, 70 } },
+} :: { CellDef }
+
+Layout.Openings = {
+	{ Id = "StairDoor", Kind = "Door", Cells = { "StairA", "CorrW" }, Axis = "X", At = 0, Center = 4.5 },
+	{
+		Id = "Dogleg",
+		Kind = "Arch",
+		Cells = { "CorrW", "CorrE" },
+		Axis = "X",
+		At = 60,
+		Center = 6.75,
+		Width = 4.5,
+	},
+	{
+		Id = "LobbyArch",
+		Kind = "Arch",
+		Cells = { "CorrE", "Lobby" },
+		Axis = "X",
+		At = 120,
+		Center = 4.5,
+		Width = 6,
+	},
+	{ Id = "LiftDoor", Kind = "Lift", Cells = { "Lobby", "Lift" }, Axis = "X", At = 132, Center = 4.5 },
+	{ Id = "Door4A", Kind = "Fake", Cells = { "CorrW" }, Axis = "Z", At = 9, Center = 15, Label = "4A" },
+	{
+		Id = "Door4B",
+		Kind = "Door",
+		Cells = { "CorrW", "R4B" },
+		Axis = "Z",
+		At = 9,
+		Center = 34,
+		Label = "4B",
+	},
+	{
+		Id = "DoorLaundry",
+		Kind = "Door",
+		Cells = { "CorrE", "Laundry" },
+		Axis = "Z",
+		At = 9,
+		Center = 74,
+		Label = "LAUNDRY",
+	},
+	{
+		Id = "Door4D",
+		Kind = "Plastic",
+		Cells = { "CorrE", "R4D" },
+		Axis = "Z",
+		At = 9,
+		Center = 100,
+		Label = "4D",
+	},
+	{ Id = "Door4F", Kind = "Fake", Cells = { "CorrW" }, Axis = "Z", At = 0, Center = 20, Label = "4F" },
+	{
+		Id = "Door4E_W",
+		Kind = "Door",
+		Cells = { "CorrW", "R4E" },
+		Axis = "Z",
+		At = 0,
+		Center = 48,
+		Label = "4E",
+	},
+	{
+		Id = "Door4E_E",
+		Kind = "Door",
+		Cells = { "CorrE", "R4E" },
+		Axis = "Z",
+		At = 0,
+		Center = 74,
+		Label = "4E",
+	},
+	{
+		Id = "DoorCloset",
+		Kind = "Door",
+		Cells = { "CorrE", "Closet" },
+		Axis = "Z",
+		At = 0,
+		Center = 106,
+		Label = "CARETAKER",
+	},
+} :: { OpeningDef }
+
+-- Free-standing walls (the dog-leg chicane that breaks the corridor sightline).
+Layout.ExtraWalls = {
+	{ Axis = "X", At = 66, From = 4.5, To = 9, Cell = "CorrE" },
+} :: { WallDef }
+
+Layout.Points = {
+	{ Id = "Spawn", Kind = "Spawn", Cell = "StairA", Pos = { -6, 3, 4.5 } },
+	{
+		Id = "Clipboard",
+		Kind = "Note",
+		Cell = "StairA",
+		Pos = { -0.6, 4.5, 2 },
+		Data = { NoteId = "Clipboard" },
+	},
+	{ Id = "Tape4B", Kind = "Tape", Cell = "R4B", Pos = { 40, 3, 26 }, Data = { TapeId = "Tape01" } },
+	{ Id = "Fuse1", Kind = "Item", Cell = "Laundry", Pos = { 80, 3, 26 }, Data = { ItemId = "Fuse" } },
+	{ Id = "Fuse2", Kind = "Item", Cell = "R4D", Pos = { 108, 3, 26 }, Data = { ItemId = "Fuse" } },
+	{ Id = "FuseBox", Kind = "FuseBox", Cell = "Lobby", Pos = { 126, 4.5, 8.5 }, Data = { Needs = 2 } },
+	{
+		Id = "LightW",
+		Kind = "Fluorescent",
+		Cell = "CorrW",
+		Pos = { 22, 10.6, 4.5 },
+		Data = { Working = true },
+	},
+	{
+		Id = "LightE",
+		Kind = "Fluorescent",
+		Cell = "CorrE",
+		Pos = { 92, 10.6, 4.5 },
+		Data = { Working = true },
+	},
+	{
+		Id = "LightDead1",
+		Kind = "Fluorescent",
+		Cell = "CorrW",
+		Pos = { 45, 10.6, 4.5 },
+		Data = { Working = false },
+	},
+	{
+		Id = "LightDead2",
+		Kind = "Fluorescent",
+		Cell = "CorrE",
+		Pos = { 110, 10.6, 4.5 },
+		Data = { Working = false },
+	},
+	{ Id = "Lamp4B", Kind = "Lamp", Cell = "R4B", Pos = { 30, 4, 25 }, Data = {} },
+	{ Id = "StairWindow", Kind = "Sodium", Cell = "StairA", Pos = { -11.5, 7, 4.5 }, Data = {} },
+	{ Id = "LodgerHome", Kind = "LodgerHome", Cell = "Laundry", Pos = { 70, 3, 24 } },
+} :: { PointDef }
+
+return Layout
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="9">
+          <Properties>
+            <string name="Name">LodgerConfig</string>
+            <string name="Source"><![CDATA[--!strict
+-- The Lodger's perception and movement. See §I.
+return {
+	WalkSpeed = 8, -- players walk at 10 and run at 17, so a running player always escapes
+	PursueSpeed = 11,
+	AgentRadius = 1.6,
+	AgentHeight = 5,
+	SightRange = 60,
+	SightRangeFlashlightOn = 90,
+	SightConeDegrees = 110,
+	HearingRange = 70, -- loudness 1.0 heard this far through open space
+	DoorMuffle = 0.35, -- each closed door between multiplies loudness by this
+	CatchDistance = 3.2,
+	DeviateHoldSeconds = 2.2,
+	SearchSeconds = 12,
+	LoseSightSeconds = 4,
+	-- Menace gauge (Alien: Isolation pattern). Rises while near/visible, forces Withdraw when full.
+	MenaceRisePerSecondNear = 0.12,
+	MenaceDecayPerSecond = 0.05,
+	MenaceNearDistance = 30,
+	MenaceWithdrawAt = 1.0,
+	RepathSeconds = 0.6,
+	-- Mimic: walk a player's echo route recorded this long ago.
+	MimicDelaySeconds = 60,
+}
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="10">
+          <Properties>
+            <string name="Name">PlayerConfig</string>
+            <string name="Source"><![CDATA[--!strict
+return {
+	WalkSpeed = 10,
+	RunSpeed = 17,
+	CrouchSpeed = 5,
+	CrouchCameraDrop = 1.6,
+	RunSpeedThreshold = 13.5, -- server classifies horizontal speed above this as running
+	CrouchSpeedThreshold = 6,
+	HeadBob = { Amplitude = 0.08, Frequency = 7 },
+	FieldOfView = 72,
+	InteractDistance = 9,
+	-- Avatar clamps so extreme avatars don't break tone (§S risks).
+	BodyScaleClamp = { Min = 0.9, Max = 1.05 },
+}
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="11">
+          <Properties>
+            <string name="Name">QualityTiers</string>
+            <string name="Source"><![CDATA[--!strict
+export type Tier = "Low" | "Medium" | "High"
+return {
+	Low = { FootprintCap = 120, FlashlightShadows = false, AcousticSimulation = false, DustParticles = false },
+	Medium = {
+		FootprintCap = 260,
+		FlashlightShadows = false,
+		AcousticSimulation = true,
+		DustParticles = false,
+	},
+	High = { FootprintCap = 400, FlashlightShadows = true, AcousticSimulation = true, DustParticles = true },
+}
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="12">
+          <Properties>
+            <string name="Name">Story</string>
+            <string name="Source"><![CDATA[--!strict
+-- Placeholder story text for the greybox. Final lines come from the story pass (C7).
+return {
+	Notes = {
+		Clipboard = "Lift's out again. Fuses: one in the laundry, one in 4D (meter cupboard). 4A, knock twice, she's deaf. - T",
+	},
+	Tapes = {
+		Tape01 = {
+			{ At = 0, Text = "[click] It's Theo. Night four." },
+			{ At = 3.5, Text = "The dust is how I know where I've been." },
+			{ At = 7.5, Text = "Clean dust, nobody's been. It's the clean rooms you want." },
+			{
+				At = 12,
+				Text = "Because whatever's walking around up here... it only goes where someone's already walked. [click]",
+			},
+		},
+	},
+	Objectives = {
+		FindFuses = "Find two fuses (laundry, 4D)",
+		PowerLift = "Put the fuses in the lift fuse box",
+		TakeLift = "Take the lift",
+	},
+}
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="13">
+          <Properties>
+            <string name="Name">WearConfig</string>
+            <string name="Source"><![CDATA[--!strict
+-- Tunables for the building's memory of footsteps. See MASTER_IMPLEMENTATION_PLAN.md §D.1.
+return {
+	-- Wear gained per second while a player is inside a cell, by movement mode.
+	GainPerSecond = {
+		Still = 0.004,
+		Crouch = 0.012,
+		Walk = 0.03,
+		Run = 0.06,
+	},
+	-- Extra wear for entering a cell (crossing a threshold counts more than lingering).
+	EnterBonus = 0.08,
+	-- Wear decays exponentially; half-life in seconds (dust settling).
+	HalfLifeSeconds = 360,
+	-- The Lodger may enter a cell only at or above this wear.
+	LodgerThreshold = 0.25,
+	-- Server tick for wear accumulation.
+	TickSeconds = 0.25,
+	-- Replication: send deltas at most this often, and only if a value moved by this much (0-255 scale).
+	ReplicateSeconds = 0.5,
+	ReplicateMinStep = 2,
+}
+]]></string>
+          </Properties>
+        </Item>
+      </Item>
+      <Item class="ModuleScript" referent="14">
+        <Properties>
+          <string name="Name">Events</string>
+          <string name="Source"><![CDATA[--!strict
+-- Collects every event definition module in this folder. Adding an event = adding a file here
+-- (plus a client presenter only if it introduces a new Category). Schema: Logic/EventSelector.
+local list = {}
+for _, child in script:GetChildren() do
+	if child:IsA("ModuleScript") then
+		local def = (require :: any)(child)
+		assert(def.Id == child.Name, "event Id must match its file name: " .. child.Name)
+		table.insert(list, def)
+	end
+end
+table.sort(list, function(a, b)
+	return a.Id < b.Id
+end)
+return list
+]]></string>
+        </Properties>
+        <Item class="ModuleScript" referent="15">
+          <Properties>
+            <string name="Name">BehindYou</string>
+            <string name="Source"><![CDATA[-- Beat 4: your own footsteps, one step behind you. Stop and they stop a beat later.
+return {
+	Id = "BehindYou",
+	Category = "EchoSound",
+	Intensity = 1,
+	Cooldown = 240,
+	Weight = 1.2,
+	States = { "Build" },
+	Requires = { Tags = { "LongCorridor" } },
+	MaxPlaysPerSession = 2,
+	Params = { Duration = 9, Lag = 1.0 },
+}
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="16">
+          <Properties>
+            <string name="Name">DoorReplay</string>
+            <string name="Source"><![CDATA[-- Beat 8: a door you used opens and closes again exactly as you did. Only you see it.
+return {
+	Id = "DoorReplay",
+	Category = "EchoObject",
+	Intensity = 2,
+	Cooldown = 200,
+	Weight = 1,
+	States = { "Build" },
+	Requires = { EchoHistorySeconds = 60 },
+	MaxPlaysPerSession = 3,
+	Params = { MinAgo = 45, MaxAgo = 240, MaxDistance = 50, MinDistance = 10 },
+}
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="17">
+          <Properties>
+            <string name="Name">EchoCrossing</string>
+            <string name="Source"><![CDATA[-- Beat 10: a copy of you crosses the far end of the corridor, walking your earlier route.
+return {
+	Id = "EchoCrossing",
+	Category = "EchoFigure",
+	Intensity = 3,
+	Cooldown = 240,
+	Weight = 1,
+	States = { "Build", "Peak" },
+	Requires = { Tags = { "LongCorridor" }, PlayerAlone = true, EchoHistorySeconds = 60 },
+	MaxPlaysPerSession = 3,
+	Params = { Duration = 7, MinAgo = 45, MaxAgo = 240, MinDistance = 20, MaxDistance = 80 },
+}
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="18">
+          <Properties>
+            <string name="Name">FakeKnock4A</string>
+            <string name="Source"><![CDATA[-- "Nothing happens" scare: two knocks from inside 4A, the flat that never opens.
+return {
+	Id = "FakeKnock4A",
+	Category = "Fake",
+	Intensity = 1,
+	Cooldown = 400,
+	Weight = 0.7,
+	States = { "Build" },
+	Requires = { Cells = { "CorrW" } },
+	MaxPlaysPerSession = 1,
+	Params = { Sound = "DoorKnock", Opening = "Door4A", Repeat = 2 },
+}
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="19">
+          <Properties>
+            <string name="Name">FootstepsAbove</string>
+            <string name="Source"><![CDATA[-- "Nothing happens" scare: slow footsteps cross the ceiling above you.
+return {
+	Id = "FootstepsAbove",
+	Category = "Fake",
+	Intensity = 1,
+	Cooldown = 300,
+	Weight = 0.7,
+	States = { "Build" },
+	MaxPlaysPerSession = 2,
+	Params = { Sound = "FootstepConcrete", Above = true, Repeat = 6 },
+}
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="20">
+          <Properties>
+            <string name="Name">LiftKnock</string>
+            <string name="Source"><![CDATA[-- Beat 18 (scripted payoff): as the lift doors close, your own knock comes from the corridor.
+return {
+	Id = "LiftKnock",
+	Category = "LiftKnock",
+	Intensity = 4,
+	Cooldown = 0,
+	Weight = 0,
+	States = { "Peak" },
+	Scripted = true,
+	Params = { Delay = 3 },
+}
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="21">
+          <Properties>
+            <string name="Name">LightReplay</string>
+            <string name="Source"><![CDATA[-- Beat 8: your own flashlight beam sweeps a corridor you already left.
+return {
+	Id = "LightReplay",
+	Category = "EchoLight",
+	Intensity = 2,
+	Cooldown = 220,
+	Weight = 0.9,
+	States = { "Build" },
+	Requires = { Tags = { "LongCorridor" }, EchoHistorySeconds = 60 },
+	MaxPlaysPerSession = 2,
+	Params = { Duration = 6, MinAgo = 45, MaxAgo = 240, MinDistance = 18, MaxDistance = 70 },
+}
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="22">
+          <Properties>
+            <string name="Name">LodgerFirst</string>
+            <string name="Source"><![CDATA[-- Beat 13 (scripted): leaving 4D with the second fuse, an echo of you stops, turns, and the lights die.
+return {
+	Id = "LodgerFirst",
+	Category = "Lodger",
+	Intensity = 5,
+	Cooldown = 0,
+	Weight = 0,
+	States = { "Peak" },
+	Scripted = true,
+	Params = { First = true, LightsOut = { "CorrE" } },
+}
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="23">
+          <Properties>
+            <string name="Name">LodgerMimic</string>
+            <string name="Source"><![CDATA[-- After the first meeting: the Lodger walks one of your old routes, waiting to be noticed.
+return {
+	Id = "LodgerMimic",
+	Category = "Lodger",
+	Intensity = 5,
+	Cooldown = 300,
+	Weight = 1,
+	States = { "Peak" },
+	Requires = { Flag = "MetLodger", MinWearInCell = 0.25, EchoHistorySeconds = 60 },
+	MaxPlaysPerSession = 3,
+	Params = { First = false },
+}
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="24">
+          <Properties>
+            <string name="Name">SilenceWindow</string>
+            <string name="Source"><![CDATA[-- Beat 9: the building goes quiet. Anticipation before something (or nothing).
+return {
+	Id = "SilenceWindow",
+	Category = "Silence",
+	Intensity = 0,
+	Cooldown = 150,
+	Weight = 0.8,
+	States = { "Build" },
+	Params = { Duration = 20 },
+}
+]]></string>
+          </Properties>
+        </Item>
+      </Item>
+      <Item class="Folder" referent="25">
+        <Properties>
+          <string name="Name">Logic</string>
+        </Properties>
+        <Item class="ModuleScript" referent="26">
+          <Properties>
+            <string name="Name">CellGraph</string>
+            <string name="Source"><![CDATA[--!strict
+-- Room/corridor graph built from LevelLayout. Pure data, testable outside Roblox.
+type Rect = { number }
+type CellDef = { Id: string, Rect: Rect, Tags: { string }? }
+type OpeningDef = { Id: string, Kind: string, Cells: { string } }
+type Layout = { Cells: { any }, Openings: { any } }
+
+export type Edge = { To: string, Opening: string, Kind: string }
+export type CellGraph = {
+	Cells: { [string]: CellDef },
+	Order: { string },
+	Edges: { [string]: { Edge } },
+}
+
+local CellGraph = {}
+
+function CellGraph.Build(layout: Layout): CellGraph
+	local cells: { [string]: CellDef } = {}
+	local order = {}
+	local edges: { [string]: { Edge } } = {}
+	for _, c in layout.Cells do
+		assert(cells[c.Id] == nil, "duplicate cell " .. c.Id)
+		cells[c.Id] = c
+		table.insert(order, c.Id)
+		edges[c.Id] = {}
+	end
+	for _, o in layout.Openings do
+		if o.Kind ~= "Fake" and #o.Cells == 2 then
+			local a, b = o.Cells[1], o.Cells[2]
+			assert(cells[a] and cells[b], "opening " .. o.Id .. " references unknown cell")
+			table.insert(edges[a], { To = b, Opening = o.Id, Kind = o.Kind })
+			table.insert(edges[b], { To = a, Opening = o.Id, Kind = o.Kind })
+		end
+	end
+	return { Cells = cells, Order = order, Edges = edges }
+end
+
+-- Returns the cell id containing (x, z) in layout-local coordinates, or nil.
+function CellGraph.CellAt(graph: CellGraph, x: number, z: number): string?
+	for _, id in graph.Order do
+		local r = graph.Cells[id].Rect
+		if x >= r[1] and x <= r[3] and z >= r[2] and z <= r[4] then
+			return id
+		end
+	end
+	return nil
+end
+
+function CellGraph.HasTag(graph: CellGraph, id: string, tag: string): boolean
+	local tags = graph.Cells[id] and graph.Cells[id].Tags
+	return tags ~= nil and table.find(tags, tag) ~= nil
+end
+
+-- Breadth-first route of cell ids from `from` to `to`, only through cells where canEnter(id) is true
+-- (the start cell is always allowed). Returns nil if unreachable.
+function CellGraph.Route(
+	graph: CellGraph,
+	from: string,
+	to: string,
+	canEnter: (string) -> boolean,
+	canPass: ((Edge) -> boolean)?
+): { string }?
+	if from == to then
+		return { from }
+	end
+	if not canEnter(to) then
+		return nil
+	end
+	local prev: { [string]: string } = {}
+	local seen = { [from] = true }
+	local queue = { from }
+	local head = 1
+	while head <= #queue do
+		local cur = queue[head]
+		head += 1
+		for _, e in graph.Edges[cur] do
+			if not seen[e.To] and canEnter(e.To) and (canPass == nil or canPass(e)) then
+				seen[e.To] = true
+				prev[e.To] = cur
+				if e.To == to then
+					local route = { to }
+					local node = to
+					while prev[node] do
+						node = prev[node]
+						table.insert(route, 1, node)
+					end
+					return route
+				end
+				table.insert(queue, e.To)
+			end
+		end
+	end
+	return nil
+end
+
+-- Number of openings of the given kinds that are "closed" between two adjacent cells along a route.
+function CellGraph.ClosedDoorsAlong(
+	graph: CellGraph,
+	route: { string },
+	isClosed: (string) -> boolean
+): number
+	local n = 0
+	for i = 1, #route - 1 do
+		for _, e in graph.Edges[route[i]] do
+			if e.To == route[i + 1] then
+				if isClosed(e.Opening) then
+					n += 1
+				end
+				break
+			end
+		end
+	end
+	return n
+end
+
+return CellGraph
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="27">
+          <Properties>
+            <string name="Name">EchoCodec</string>
+            <string name="Source"><![CDATA[--!strict
+--[[
+	Packs a recorded path into a buffer for one RemoteEvent send (MASTER_IMPLEMENTATION_PLAN §H).
+	Layout:
+	  u16 sampleCount, f32 sampleInterval, f32 quantum
+	  per sample: i16 x, i16 y, i16 z, u8 yaw (0-255 => 0-2pi), u8 flags (bit0 flashlight on, bit1 running, bit2 crouching)
+	  u16 actionCount
+	  per action: u16 sampleIndex (1-based), u8 kind, u16 idLength, bytes id
+	Positions are relative to the layout origin, quantised to `quantum` studs.
+]]
+export type Sample = { X: number, Y: number, Z: number, Yaw: number, Flags: number }
+export type Action = { Index: number, Kind: number, Id: string }
+export type Path = { Interval: number, Quantum: number, Samples: { Sample }, Actions: { Action } }
+
+local EchoCodec = {}
+
+EchoCodec.Flags = { Flashlight = 1, Running = 2, Crouching = 4 }
+EchoCodec.ActionKind = { DoorOpen = 1, DoorClose = 2, Knock = 3, FlashOn = 4, FlashOff = 5, Pickup = 6 }
+
+local TWO_PI = math.pi * 2
+local SAMPLE_BYTES = 8
+
+local function q(v: number, quantum: number): number
+	return math.clamp(math.floor(v / quantum + 0.5), -32768, 32767)
+end
+
+function EchoCodec.Encode(path: Path): buffer
+	local n = #path.Samples
+	assert(n <= 65535, "too many samples")
+	local size = 2 + 4 + 4 + n * SAMPLE_BYTES + 2
+	for _, a in path.Actions do
+		size += 2 + 1 + 2 + #a.Id
+	end
+	local b = buffer.create(size)
+	local o = 0
+	buffer.writeu16(b, o, n)
+	o += 2
+	buffer.writef32(b, o, path.Interval)
+	o += 4
+	buffer.writef32(b, o, path.Quantum)
+	o += 4
+	for _, s in path.Samples do
+		buffer.writei16(b, o, q(s.X, path.Quantum))
+		o += 2
+		buffer.writei16(b, o, q(s.Y, path.Quantum))
+		o += 2
+		buffer.writei16(b, o, q(s.Z, path.Quantum))
+		o += 2
+		local yaw = s.Yaw % TWO_PI
+		buffer.writeu8(b, o, math.floor(yaw / TWO_PI * 256) % 256)
+		o += 1
+		buffer.writeu8(b, o, s.Flags)
+		o += 1
+	end
+	buffer.writeu16(b, o, #path.Actions)
+	o += 2
+	for _, a in path.Actions do
+		buffer.writeu16(b, o, a.Index)
+		o += 2
+		buffer.writeu8(b, o, a.Kind)
+		o += 1
+		buffer.writeu16(b, o, #a.Id)
+		o += 2
+		buffer.writestring(b, o, a.Id)
+		o += #a.Id
+	end
+	return b
+end
+
+function EchoCodec.Decode(b: buffer): Path
+	local o = 0
+	local n = buffer.readu16(b, o)
+	o += 2
+	local interval = buffer.readf32(b, o)
+	o += 4
+	local quantum = buffer.readf32(b, o)
+	o += 4
+	local samples = table.create(n)
+	for i = 1, n do
+		local x = buffer.readi16(b, o) * quantum
+		o += 2
+		local y = buffer.readi16(b, o) * quantum
+		o += 2
+		local z = buffer.readi16(b, o) * quantum
+		o += 2
+		local yaw = buffer.readu8(b, o) / 256 * TWO_PI
+		o += 1
+		local flags = buffer.readu8(b, o)
+		o += 1
+		samples[i] = { X = x, Y = y, Z = z, Yaw = yaw, Flags = flags }
+	end
+	local m = buffer.readu16(b, o)
+	o += 2
+	local actions = table.create(m)
+	for i = 1, m do
+		local idx = buffer.readu16(b, o)
+		o += 2
+		local kind = buffer.readu8(b, o)
+		o += 1
+		local len = buffer.readu16(b, o)
+		o += 2
+		local id = buffer.readstring(b, o, len)
+		o += len
+		actions[i] = { Index = idx, Kind = kind, Id = id }
+	end
+	return { Interval = interval, Quantum = quantum, Samples = samples, Actions = actions }
+end
+
+return EchoCodec
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="28">
+          <Properties>
+            <string name="Name">EventSelector</string>
+            <string name="Source"><![CDATA[--!strict
+--[[
+	Chooses which horror event (if any) to play for one player. Pure.
+	Event definitions live in ReplicatedStorage.Shared.Events; see §J.3 for the schema.
+]]
+export type Requires = {
+	Tags: { string }?,
+	Cells: { string }?,
+	PlayerAlone: boolean?,
+	MinWearInCell: number?,
+	MaxWearInCell: number?,
+	EchoHistorySeconds: number?,
+	Flag: string?, -- a game flag that must be set (e.g. "HasTape01")
+	NotFlag: string?,
+}
+export type EventDef = {
+	Id: string,
+	Category: string,
+	Intensity: number,
+	MinProgress: number?,
+	Cooldown: number,
+	Weight: number,
+	States: { string },
+	Requires: Requires?,
+	MaxPlaysPerSession: number?,
+	Scripted: boolean?, -- only fired by scripted triggers, never selected by the Director
+}
+export type Context = {
+	State: string,
+	Progress: number,
+	Cell: string?,
+	CellTags: { string },
+	CellWear: number,
+	Alone: boolean,
+	EchoHistorySeconds: number,
+	Flags: { [string]: boolean },
+}
+export type History = {
+	LastByEvent: { [string]: number },
+	PlaysByEvent: { [string]: number },
+	LastAny: number,
+	LastMajor: number,
+	Recent: { { Category: string, At: number } },
+}
+
+local EventSelector = {}
+
+function EventSelector.NewHistory(): History
+	return { LastByEvent = {}, PlaysByEvent = {}, LastAny = -math.huge, LastMajor = -math.huge, Recent = {} }
+end
+
+function EventSelector.Record(h: History, def: EventDef, now: number, cfg: any)
+	h.LastByEvent[def.Id] = now
+	h.PlaysByEvent[def.Id] = (h.PlaysByEvent[def.Id] or 0) + 1
+	h.LastAny = now
+	if def.Intensity >= cfg.MajorIntensity then
+		h.LastMajor = now
+	end
+	table.insert(h.Recent, { Category = def.Category, At = now })
+	-- Drop entries outside the recency window.
+	local cutoff = now - cfg.RecentWindowSeconds
+	while h.Recent[1] and h.Recent[1].At < cutoff do
+		table.remove(h.Recent, 1)
+	end
+end
+
+local function anyTag(have: { string }, want: { string }): boolean
+	for _, t in want do
+		if table.find(have, t) then
+			return true
+		end
+	end
+	return false
+end
+
+-- Returns a reason string when the event is not eligible (useful for the debug overlay), else nil.
+function EventSelector.Ineligible(def: EventDef, ctx: Context, h: History, now: number, cfg: any): string?
+	if def.Scripted then
+		return "scripted"
+	end
+	if not table.find(def.States, ctx.State) then
+		return "state"
+	end
+	if ctx.Progress < (def.MinProgress or 0) then
+		return "progress"
+	end
+	if now - (h.LastByEvent[def.Id] or -math.huge) < def.Cooldown then
+		return "cooldown"
+	end
+	if now - h.LastAny < cfg.MinSecondsBetweenEvents then
+		return "spacing"
+	end
+	if def.Intensity >= cfg.MajorIntensity and now - h.LastMajor < cfg.MinSecondsBetweenMajor then
+		return "majorSpacing"
+	end
+	if def.MaxPlaysPerSession and (h.PlaysByEvent[def.Id] or 0) >= def.MaxPlaysPerSession then
+		return "maxPlays"
+	end
+	local r = def.Requires
+	if r then
+		if r.Tags and not anyTag(ctx.CellTags, r.Tags) then
+			return "tags"
+		end
+		if r.Cells and (ctx.Cell == nil or not table.find(r.Cells, ctx.Cell)) then
+			return "cell"
+		end
+		if r.PlayerAlone and not ctx.Alone then
+			return "notAlone"
+		end
+		if r.MinWearInCell and ctx.CellWear < r.MinWearInCell then
+			return "wearLow"
+		end
+		if r.MaxWearInCell and ctx.CellWear > r.MaxWearInCell then
+			return "wearHigh"
+		end
+		if r.EchoHistorySeconds and ctx.EchoHistorySeconds < r.EchoHistorySeconds then
+			return "history"
+		end
+		if r.Flag and not ctx.Flags[r.Flag] then
+			return "flag"
+		end
+		if r.NotFlag and ctx.Flags[r.NotFlag] then
+			return "notFlag"
+		end
+	end
+	return nil
+end
+
+function EventSelector.Weight(def: EventDef, h: History, cfg: any): number
+	local same = 0
+	for _, r in h.Recent do
+		if r.Category == def.Category then
+			same += 1
+		end
+	end
+	return def.Weight * (cfg.RecentCategoryPenalty ^ same)
+end
+
+-- Weighted random pick among eligible events. rng returns [0, 1).
+function EventSelector.Select(
+	defs: { EventDef },
+	ctx: Context,
+	h: History,
+	now: number,
+	cfg: any,
+	rng: () -> number
+): EventDef?
+	local pool = {}
+	local total = 0
+	for _, def in defs do
+		if EventSelector.Ineligible(def, ctx, h, now, cfg) == nil then
+			local w = EventSelector.Weight(def, h, cfg)
+			if w > 0 then
+				total += w
+				table.insert(pool, { def = def, w = w })
+			end
+		end
+	end
+	if total <= 0 then
+		return nil
+	end
+	local pick = rng() * total
+	for _, e in pool do
+		pick -= e.w
+		if pick < 0 then
+			return e.def
+		end
+	end
+	return pool[#pool].def
+end
+
+return EventSelector
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="29">
+          <Properties>
+            <string name="Name">LodgerBrain</string>
+            <string name="Source"><![CDATA[--!strict
+--[[
+	The Lodger's decision logic as a pure state machine (§I.2). LodgerService gathers perception
+	into a Snapshot, calls Step, and carries out the returned state. No Roblox APIs here.
+]]
+export type State = "Dormant" | "Mimic" | "Deviate" | "Pursue" | "Search" | "Withdraw" | "Take"
+export type Brain = {
+	State: State,
+	StateTime: number,
+	Menace: number,
+	SinceSeen: number,
+}
+export type Snapshot = {
+	Dt: number,
+	HasTarget: boolean,
+	TargetVisible: boolean,
+	TargetDistance: number,
+	TargetReachable: boolean, -- target's cell is worn enough and connected through worn cells
+	TargetLookingAtMe: boolean,
+	HeardLoudness: number, -- 0..1 after attenuation
+	RouteDone: boolean, -- current movement goal reached / echo route finished
+}
+
+local LodgerBrain = {}
+
+function LodgerBrain.New(): Brain
+	return { State = "Dormant", StateTime = 0, Menace = 0, SinceSeen = math.huge }
+end
+
+local function enter(b: Brain, s: State)
+	b.State = s
+	b.StateTime = 0
+end
+
+function LodgerBrain.Wake(b: Brain)
+	if b.State == "Dormant" then
+		enter(b, "Mimic")
+		b.Menace = 0
+		b.SinceSeen = math.huge
+	end
+end
+
+function LodgerBrain.Finish(b: Brain)
+	-- Take sequence or withdraw route complete.
+	if b.State == "Take" then
+		enter(b, "Withdraw")
+	elseif b.State == "Withdraw" then
+		enter(b, "Dormant")
+	end
+end
+
+-- Returns the new state if it changed.
+function LodgerBrain.Step(b: Brain, s: Snapshot, cfg: any): State?
+	local before = b.State
+	b.StateTime += s.Dt
+	if s.TargetVisible then
+		b.SinceSeen = 0
+	else
+		b.SinceSeen += s.Dt
+	end
+
+	-- Menace gauge: pressure on the player builds while it is close and seen; it must back off when full.
+	if b.State ~= "Dormant" and b.State ~= "Withdraw" then
+		if s.HasTarget and s.TargetDistance < cfg.MenaceNearDistance and s.TargetVisible then
+			b.Menace = math.min(1, b.Menace + cfg.MenaceRisePerSecondNear * s.Dt)
+		else
+			b.Menace = math.max(0, b.Menace - cfg.MenaceDecayPerSecond * s.Dt)
+		end
+	end
+
+	local st = b.State
+	if st == "Dormant" or st == "Take" or st == "Withdraw" then
+		-- Leaving these is driven by Wake/Finish.
+		if st == "Withdraw" and s.RouteDone then
+			enter(b, "Dormant")
+		end
+	elseif not s.HasTarget then
+		enter(b, "Withdraw")
+	elseif b.Menace >= cfg.MenaceWithdrawAt then
+		enter(b, "Withdraw")
+	elseif st == "Mimic" then
+		local noticed = s.TargetVisible and s.TargetLookingAtMe and s.TargetDistance < 45
+		if noticed or s.HeardLoudness >= 0.5 then
+			enter(b, "Deviate")
+		elseif s.RouteDone then
+			if s.TargetVisible then
+				enter(b, "Deviate")
+			else
+				enter(b, "Withdraw")
+			end
+		end
+	elseif st == "Deviate" then
+		if b.StateTime >= cfg.DeviateHoldSeconds then
+			enter(b, if s.TargetReachable then "Pursue" else "Search")
+		end
+	elseif st == "Pursue" then
+		if s.TargetReachable and s.TargetDistance <= cfg.CatchDistance then
+			enter(b, "Take")
+		elseif not s.TargetReachable then
+			enter(b, "Search") -- holds at the edge of clean dust
+		elseif b.SinceSeen >= cfg.LoseSightSeconds and s.HeardLoudness < 0.3 then
+			enter(b, "Search")
+		end
+	elseif st == "Search" then
+		if s.TargetReachable and (s.TargetVisible or s.HeardLoudness >= 0.4) then
+			enter(b, "Pursue")
+		elseif b.StateTime >= cfg.SearchSeconds then
+			enter(b, "Withdraw")
+		end
+	end
+	if b.State ~= before then
+		return b.State
+	end
+	return nil
+end
+
+return LodgerBrain
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="30">
+          <Properties>
+            <string name="Name">PacingModel</string>
+            <string name="Source"><![CDATA[--!strict
+--[[
+	Per-player pacing state (Left 4 Dead director pattern: build-up, peak, fade, relax).
+	Pure: callers own time and randomness. MASTER_IMPLEMENTATION_PLAN.md §J.2.
+]]
+export type StateName = "Relax" | "Build" | "Peak" | "Fade"
+export type Pacing = {
+	State: StateName,
+	StateTime: number,
+	StateDuration: number,
+	Tension: number,
+	PeakResolved: boolean,
+}
+export type Inputs = {
+	Dt: number,
+	Running: boolean,
+	Dark: boolean,
+	LodgerNear: boolean,
+}
+
+local PacingModel = {}
+
+local function durationFor(cfg: any, state: StateName, rng: () -> number): number
+	local s = cfg.States[state]
+	local lo = s.MinSeconds or s.MaxSeconds
+	local hi = s.MaxSeconds or lo
+	return lo + (hi - lo) * rng()
+end
+
+function PacingModel.New(cfg: any, rng: () -> number): Pacing
+	return {
+		State = "Relax",
+		StateTime = 0,
+		StateDuration = durationFor(cfg, "Relax", rng),
+		Tension = 0,
+		PeakResolved = false,
+	}
+end
+
+function PacingModel.Enter(p: Pacing, state: StateName, cfg: any, rng: () -> number, duration: number?)
+	p.State = state
+	p.StateTime = 0
+	p.StateDuration = duration or durationFor(cfg, state, rng)
+	p.PeakResolved = false
+end
+
+function PacingModel.AddTension(p: Pacing, amount: number)
+	p.Tension = math.clamp(p.Tension + amount, 0, 100)
+end
+
+-- Called by the Director when the Peak's major beat has played out.
+function PacingModel.ResolvePeak(p: Pacing)
+	p.PeakResolved = true
+end
+
+-- Advances time and returns the new state name if a transition happened.
+function PacingModel.Step(p: Pacing, input: Inputs, cfg: any, rng: () -> number): StateName?
+	local dt = input.Dt
+	p.StateTime += dt
+	local gain = 0
+	if input.Running then
+		gain += cfg.TensionFromRunPerSecond
+	end
+	if input.Dark then
+		gain += cfg.TensionFromDarkPerSecond
+	end
+	if input.LodgerNear then
+		gain += cfg.TensionFromLodgerNearPerSecond
+	end
+	p.Tension = math.clamp(p.Tension + (gain - cfg.TensionDecayPerSecond) * dt, 0, 100)
+
+	local s = p.State
+	local nextState: StateName? = nil
+	if s == "Relax" then
+		if p.StateTime >= p.StateDuration then
+			nextState = "Build"
+		end
+	elseif s == "Build" then
+		if p.Tension >= cfg.BuildToPeakTension or p.StateTime >= p.StateDuration then
+			nextState = "Peak"
+		end
+	elseif s == "Peak" then
+		if p.PeakResolved or p.StateTime >= p.StateDuration then
+			nextState = "Fade"
+		end
+	elseif s == "Fade" then
+		if p.StateTime >= p.StateDuration then
+			nextState = "Relax"
+		end
+	end
+	if nextState then
+		PacingModel.Enter(p, nextState, cfg, rng)
+	end
+	return nextState
+end
+
+-- Death or a scripted beat forces a long relax.
+function PacingModel.ForceRelax(p: Pacing, seconds: number, cfg: any, rng: () -> number)
+	PacingModel.Enter(p, "Relax", cfg, rng, seconds)
+	p.Tension = math.min(p.Tension, 20)
+end
+
+return PacingModel
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="31">
+          <Properties>
+            <string name="Name">WearMath</string>
+            <string name="Source"><![CDATA[--!strict
+-- Pure wear arithmetic (no Roblox APIs) so it can be unit-tested.
+local WearMath = {}
+
+function WearMath.Decay(w: number, dt: number, halfLife: number): number
+	if w <= 0 then
+		return 0
+	end
+	return w * (0.5 ^ (dt / halfLife))
+end
+
+function WearMath.Add(w: number, amount: number): number
+	return math.clamp(w + amount, 0, 1)
+end
+
+function WearMath.ToByte(w: number): number
+	return math.clamp(math.floor(w * 255 + 0.5), 0, 255)
+end
+
+function WearMath.FromByte(b: number): number
+	return b / 255
+end
+
+-- Seconds until wear w decays below threshold (0 if already below).
+function WearMath.SecondsUntilBelow(w: number, threshold: number, halfLife: number): number
+	if w <= threshold or threshold <= 0 then
+		return 0
+	end
+	return halfLife * math.log(w / threshold, 2)
+end
+
+return WearMath
+]]></string>
+          </Properties>
+        </Item>
+      </Item>
+      <Item class="ModuleScript" referent="32">
+        <Properties>
+          <string name="Name">Net</string>
+          <string name="Source"><![CDATA[--!strict
+--[[
+	Every RemoteEvent in the game is declared here, once (MASTER_IMPLEMENTATION_PLAN §G.3, §H).
+	Server: Net.Init() creates them; Net.OnServer(name, handler) validates args and rate-limits.
+	Client: Net.OnClient / Net.FireServer wait for the server's instances.
+]]
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+
+type Validator = (...any) -> boolean
+type Def = { Unreliable: boolean?, RatePerSecond: number?, Validate: Validator? }
+
+local function isInstance(v: any): boolean
+	return typeof(v) == "Instance"
+end
+
+-- C->S remotes carry a validator and a rate limit. S->C remotes need neither.
+local Defs: { [string]: Def } = {
+	-- Client to server
+	Interact = {
+		RatePerSecond = 8,
+		Validate = function(target, action)
+			return isInstance(target) and type(action) == "string" and #action <= 16
+		end,
+	},
+	HoldInteract = {
+		RatePerSecond = 4,
+		Validate = function(target, phase)
+			return isInstance(target) and (phase == "Begin" or phase == "End")
+		end,
+	},
+	Flashlight = {
+		RatePerSecond = 6,
+		Validate = function(on)
+			return type(on) == "boolean"
+		end,
+	},
+	Look = {
+		Unreliable = true,
+		RatePerSecond = 8,
+		Validate = function(dir)
+			return typeof(dir) == "Vector3" and dir.Magnitude > 0.5 and dir.Magnitude < 1.5
+		end,
+	},
+	EventFeedback = {
+		RatePerSecond = 4,
+		Validate = function(token, noticed)
+			return type(token) == "number" and type(noticed) == "boolean"
+		end,
+	},
+	Stance = {
+		RatePerSecond = 6,
+		Validate = function(stance)
+			return stance == "Walk" or stance == "Run" or stance == "Crouch"
+		end,
+	},
+	-- Server to client
+	WearSnapshot = {},
+	EventPlay = {},
+	Subtitle = {},
+	Objective = {},
+	Taken = {},
+	SliceEnd = {},
+	DebugState = { Unreliable = true },
+}
+
+local Net = {}
+Net.Names = {} :: { [string]: string }
+for name in Defs do
+	Net.Names[name] = name
+end
+
+local folder: Folder? = nil
+local remotes: { [string]: any } = {}
+
+function Net.Init()
+	assert(RunService:IsServer(), "Net.Init is server-only")
+	local f = Instance.new("Folder")
+	f.Name = "Remotes"
+	for name, def in Defs do
+		local r = Instance.new(if def.Unreliable then "UnreliableRemoteEvent" else "RemoteEvent")
+		r.Name = name
+		r.Parent = f
+		remotes[name] = r
+	end
+	f.Parent = ReplicatedStorage
+	folder = f
+end
+
+local function remote(name: string): any
+	local r = remotes[name]
+	if r then
+		return r
+	end
+	assert(Defs[name], "unknown remote " .. name)
+	if not folder then
+		folder = ReplicatedStorage:WaitForChild("Remotes") :: Folder
+	end
+	r = (folder :: Folder):WaitForChild(name)
+	remotes[name] = r
+	return r
+end
+
+-- Per-player token bucket so a client can't flood a remote.
+local buckets: { [Player]: { [string]: { tokens: number, at: number } } } = {}
+if RunService:IsServer() then
+	Players.PlayerRemoving:Connect(function(p)
+		buckets[p] = nil
+	end)
+end
+
+local function allow(player: Player, name: string, rate: number): boolean
+	local now = os.clock()
+	local pb = buckets[player]
+	if not pb then
+		pb = {}
+		buckets[player] = pb
+	end
+	local b = pb[name]
+	if not b then
+		b = { tokens = rate, at = now }
+		pb[name] = b
+	end
+	b.tokens = math.min(rate, b.tokens + (now - b.at) * rate)
+	b.at = now
+	if b.tokens < 1 then
+		return false
+	end
+	b.tokens -= 1
+	return true
+end
+
+function Net.OnServer(name: string, handler: (Player, ...any) -> ())
+	local def = Defs[name]
+	assert(def and def.Validate, name .. " is not a client-to-server remote")
+	local validate = def.Validate :: Validator
+	local rate = def.RatePerSecond or 4
+	remote(name).OnServerEvent:Connect(function(player: Player, ...)
+		if not allow(player, name, rate) then
+			return
+		end
+		local ok, valid = pcall(validate, ...)
+		if not ok or not valid then
+			return
+		end
+		handler(player, ...)
+	end)
+end
+
+function Net.Fire(player: Player, name: string, ...: any)
+	remote(name):FireClient(player, ...)
+end
+
+function Net.FireAll(name: string, ...: any)
+	remote(name):FireAllClients(...)
+end
+
+function Net.OnClient(name: string, handler: (...any) -> ())
+	remote(name).OnClientEvent:Connect(handler)
+end
+
+function Net.FireServer(name: string, ...: any)
+	remote(name):FireServer(...)
+end
+
+return Net
+]]></string>
+        </Properties>
+      </Item>
+      <Item class="Folder" referent="33">
+        <Properties>
+          <string name="Name">Util</string>
+        </Properties>
+        <Item class="ModuleScript" referent="34">
+          <Properties>
+            <string name="Name">Janitor</string>
+            <string name="Source"><![CDATA[--!strict
+-- Owns things that need cleaning up (connections, instances, threads, functions, objects with Destroy).
+-- Cleanup runs in reverse order of addition.
+local Janitor = {}
+Janitor.__index = Janitor
+
+export type Janitor = typeof(setmetatable({} :: { _items: { any } }, Janitor))
+
+function Janitor.new(): Janitor
+	return setmetatable({ _items = {} }, Janitor)
+end
+
+function Janitor.Add<T>(self: Janitor, item: T): T
+	table.insert(self._items, item)
+	return item
+end
+
+local function clean(item: any)
+	local t = typeof(item)
+	if t == "function" then
+		item()
+	elseif t == "RBXScriptConnection" then
+		item:Disconnect()
+	elseif t == "Instance" then
+		item:Destroy()
+	elseif t == "thread" then
+		pcall(task.cancel, item)
+	elseif t == "table" then
+		if type(item.Destroy) == "function" then
+			item:Destroy()
+		elseif type(item.Disconnect) == "function" then
+			item:Disconnect()
+		end
+	end
+end
+
+function Janitor.Cleanup(self: Janitor)
+	local items = self._items
+	self._items = {}
+	for i = #items, 1, -1 do
+		clean(items[i])
+	end
+end
+
+Janitor.Destroy = Janitor.Cleanup
+
+return Janitor
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="35">
+          <Properties>
+            <string name="Name">LayoutSpace</string>
+            <string name="Source"><![CDATA[--!strict
+-- Converts between layout-local (x, z on the floor plan) and world space.
+local Layout = require(script.Parent.Parent.Config.LevelLayout)
+
+local LayoutSpace = {}
+local O = Layout.Origin
+LayoutSpace.Origin = Vector3.new(O[1], O[2], O[3])
+
+function LayoutSpace.ToWorld(x: number, y: number, z: number): Vector3
+	return LayoutSpace.Origin + Vector3.new(x, y, z)
+end
+
+function LayoutSpace.ToLocal(p: Vector3): Vector3
+	return p - LayoutSpace.Origin
+end
+
+return LayoutSpace
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="36">
+          <Properties>
+            <string name="Name">Loader</string>
+            <string name="Source"><![CDATA[--!strict
+--[[
+	Starts services (server) or controllers (client) in an explicit order.
+	Each module returns a table with optional Init(registry) and Start() methods.
+	Init runs for all modules first (wire references), then Start for all (begin work).
+]]
+export type Registry = { [string]: any }
+
+local Loader = {}
+
+function Loader.Run(container: Instance, order: { string }): Registry
+	local registry: Registry = {}
+	local modules = {}
+	for _, name in order do
+		local m = container:FindFirstChild(name)
+		assert(m and m:IsA("ModuleScript"), "missing module " .. name)
+		local mod = (require :: any)(m)
+		registry[name] = mod
+		table.insert(modules, { name = name, mod = mod })
+	end
+	-- Warn about modules that exist but were left out of the order list (likely a mistake).
+	for _, child in container:GetChildren() do
+		if child:IsA("ModuleScript") and registry[child.Name] == nil then
+			warn("[Loader] " .. child.Name .. " is not in the start order and was not loaded")
+		end
+	end
+	for _, e in modules do
+		if type(e.mod.Init) == "function" then
+			e.mod:Init(registry)
+		end
+	end
+	for _, e in modules do
+		if type(e.mod.Start) == "function" then
+			task.spawn(function()
+				e.mod:Start()
+			end)
+		end
+	end
+	return registry
+end
+
+return Loader
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="37">
+          <Properties>
+            <string name="Name">RingBuffer</string>
+            <string name="Source"><![CDATA[--!nonstrict
+-- Fixed-capacity ring buffer. Index 1 = oldest retained item.
+local RingBuffer = {}
+RingBuffer.__index = RingBuffer
+
+export type RingBuffer<T> = {
+	Push: (self: RingBuffer<T>, item: T) -> (),
+	Get: (self: RingBuffer<T>, i: number) -> T?,
+	Size: (self: RingBuffer<T>) -> number,
+	Capacity: number,
+	Total: number, -- items ever pushed
+}
+
+function RingBuffer.new<T>(capacity: number): RingBuffer<T>
+	assert(capacity >= 1, "capacity must be >= 1")
+	local self = { _data = table.create(capacity), _head = 0, _count = 0, Capacity = capacity, Total = 0 }
+	return (setmetatable(self, RingBuffer) :: any) :: RingBuffer<T>
+end
+
+function RingBuffer:Push(item)
+	self._head = (self._head % self.Capacity) + 1
+	self._data[self._head] = item
+	if self._count < self.Capacity then
+		self._count += 1
+	end
+	self.Total += 1
+end
+
+function RingBuffer:Size(): number
+	return self._count
+end
+
+function RingBuffer:Get(i: number)
+	if i < 1 or i > self._count then
+		return nil
+	end
+	-- oldest index = head - count + 1 (wrapped)
+	local idx = ((self._head - self._count + i - 1) % self.Capacity) + 1
+	return self._data[idx]
+end
+
+return RingBuffer
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="38">
+          <Properties>
+            <string name="Name">Signal</string>
+            <string name="Source"><![CDATA[--!nonstrict
+-- Minimal synchronous signal. Handlers run in connection order; a disconnected handler never runs again.
+export type Connection = { Connected: boolean, Disconnect: (self: Connection) -> () }
+export type Signal<T...> = {
+	Connect: (self: Signal<T...>, fn: (T...) -> ()) -> Connection,
+	Once: (self: Signal<T...>, fn: (T...) -> ()) -> Connection,
+	Fire: (self: Signal<T...>, T...) -> (),
+	DisconnectAll: (self: Signal<T...>) -> (),
+}
+
+local Signal = {}
+Signal.__index = Signal
+
+function Signal.new<T...>(): Signal<T...>
+	local self = setmetatable({ _handlers = {} :: { any } }, Signal)
+	return (self :: any) :: Signal<T...>
+end
+
+function Signal:Connect(fn)
+	local conn: any
+	conn = {
+		Connected = true,
+		_fn = fn,
+		Disconnect = function(c)
+			if not c.Connected then
+				return
+			end
+			c.Connected = false
+			local list = self._handlers
+			local i = table.find(list, c)
+			if i then
+				table.remove(list, i)
+			end
+		end,
+	}
+	table.insert(self._handlers, conn)
+	return conn
+end
+
+function Signal:Once(fn)
+	local conn
+	conn = self:Connect(function(...)
+		conn:Disconnect()
+		fn(...)
+	end)
+	return conn
+end
+
+function Signal:Fire(...)
+	-- Copy so handlers may disconnect during dispatch.
+	local snapshot = table.clone(self._handlers)
+	for _, c in snapshot do
+		if c.Connected then
+			c._fn(...)
+		end
+	end
+end
+
+function Signal:DisconnectAll()
+	for _, c in table.clone(self._handlers) do
+		c:Disconnect()
+	end
+end
+
+return Signal
+]]></string>
+          </Properties>
+        </Item>
+      </Item>
+    </Item>
+  </Item>
+  <Item class="ServerScriptService" referent="39">
+    <Properties>
+      <string name="Name">ServerScriptService</string>
+    </Properties>
+    <Item class="Folder" referent="40">
+      <Properties>
+        <string name="Name">Server</string>
+      </Properties>
+      <Item class="Script" referent="41">
+        <Properties>
+          <string name="Name">Bootstrap</string>
+          <token name="RunContext">0</token>
+          <string name="Source"><![CDATA[--!strict
+-- Server entry point. Order matters: GreyboxBuilder must build the map before services look for tags.
+local Shared = game:GetService("ReplicatedStorage"):WaitForChild("Shared")
+local Loader = require(Shared.Util.Loader)
+local Net = require(Shared.Net)
+
+Net.Init()
+
+Loader.Run(script.Parent.Services, {
+	"GreyboxBuilder",
+	"AnalyticsService",
+	"PlayerService",
+	"CellService",
+	"WearService",
+	"InteractionService",
+	"EchoService",
+	"HorrorEventService",
+	"ObjectiveService",
+	"LodgerService",
+	"DirectorService",
+})
+]]></string>
+        </Properties>
+      </Item>
+      <Item class="Folder" referent="42">
+        <Properties>
+          <string name="Name">Services</string>
+        </Properties>
+        <Item class="ModuleScript" referent="43">
+          <Properties>
+            <string name="Name">AnalyticsService</string>
+            <string name="Source"><![CDATA[--!strict
+-- Playtest telemetry. For the greybox it prints to the server log in one parseable line per event;
+-- swap the sink for AnalyticsService custom events once the slice is published.
+local HttpService = game:GetService("HttpService")
+
+local AnalyticsService = {}
+local started = os.clock()
+
+function AnalyticsService:Log(player: Player?, name: string, data: { [string]: any }?)
+	local line = {
+		t = math.floor((os.clock() - started) * 10) / 10,
+		p = if player then player.UserId else 0,
+		e = name,
+		d = data,
+	}
+	print("[Telemetry] " .. HttpService:JSONEncode(line))
+end
+
+return AnalyticsService
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="44">
+          <Properties>
+            <string name="Name">CellService</string>
+            <string name="Source"><![CDATA[--!strict
+-- Knows which cell (room / corridor segment) every player is in.
+local Players = game:GetService("Players")
+
+local Shared = game:GetService("ReplicatedStorage"):WaitForChild("Shared")
+local CellGraph = require(Shared.Logic.CellGraph)
+local Layout = require(Shared.Config.LevelLayout)
+local LayoutSpace = require(Shared.Util.LayoutSpace)
+local Signal = require(Shared.Util.Signal)
+
+local CellService = {}
+CellService.Graph = CellGraph.Build(Layout)
+CellService.CellChanged = Signal.new() :: Signal.Signal<Player, string?, string?>
+
+local current: { [Player]: string? } = {}
+local PlayerService: any
+
+function CellService:CellAt(worldPos: Vector3): string?
+	local l = LayoutSpace.ToLocal(worldPos)
+	if l.Y < -2 or l.Y > Layout.Height + 2 then
+		return nil
+	end
+	return CellGraph.CellAt(self.Graph, l.X, l.Z)
+end
+
+function CellService:GetCell(player: Player): string?
+	return current[player]
+end
+
+function CellService:PlayersIn(cellId: string): { Player }
+	local out = {}
+	for p, c in current do
+		if c == cellId then
+			table.insert(out, p)
+		end
+	end
+	return out
+end
+
+function CellService:HasTag(cellId: string, tag: string): boolean
+	return CellGraph.HasTag(self.Graph, cellId, tag)
+end
+
+function CellService:Tags(cellId: string?): { string }
+	local c = cellId and self.Graph.Cells[cellId]
+	return (c and c.Tags) or {}
+end
+
+function CellService:Init(registry)
+	PlayerService = registry.PlayerService
+end
+
+function CellService:Start()
+	Players.PlayerRemoving:Connect(function(p)
+		current[p] = nil
+	end)
+	while true do
+		for _, p in Players:GetPlayers() do
+			local root = PlayerService:GetRoot(p)
+			local cell = if root and PlayerService:IsAlive(p) then self:CellAt(root.Position) else nil
+			local old = current[p]
+			if cell ~= old then
+				current[p] = cell
+				p:SetAttribute("Cell", cell)
+				CellService.CellChanged:Fire(p, old, cell)
+			end
+		end
+		task.wait(0.2)
+	end
+end
+
+return CellService
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="45">
+          <Properties>
+            <string name="Name">DirectorService</string>
+            <string name="Source"><![CDATA[--!strict
+--[[
+	The Horror Director (plan §J): one pacing model per player, chooses events through
+	Logic/EventSelector, never spams. In Studio it also streams its state to the debug overlay.
+]]
+local CollectionService = game:GetService("CollectionService")
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+
+local Shared = game:GetService("ReplicatedStorage"):WaitForChild("Shared")
+local DirectorConfig = require(Shared.Config.DirectorConfig)
+local EventSelector = require(Shared.Logic.EventSelector)
+local Net = require(Shared.Net)
+local PacingModel = require(Shared.Logic.PacingModel)
+local WearMath = require(Shared.Logic.WearMath)
+
+type PlayerState = {
+	Pacing: PacingModel.Pacing,
+	History: EventSelector.History,
+	PeakEventAt: number?,
+}
+
+local DirectorService = {}
+
+local states: { [Player]: PlayerState } = {}
+local rng = Random.new()
+local function roll(): number
+	return rng:NextNumber()
+end
+
+local PlayerService: any
+local CellService: any
+local WearService: any
+local EchoService: any
+local ObjectiveService: any
+local HorrorEventService: any
+local LodgerService: any
+local AnalyticsService: any
+
+local function stateFor(p: Player): PlayerState
+	local s = states[p]
+	if not s then
+		s = { Pacing = PacingModel.New(DirectorConfig, roll), History = EventSelector.NewHistory() }
+		states[p] = s
+	end
+	return s
+end
+
+local function isAlone(p: Player): boolean
+	local r = PlayerService:GetRoot(p)
+	if not r then
+		return true
+	end
+	for _, other in Players:GetPlayers() do
+		if other ~= p then
+			local o = PlayerService:GetRoot(other)
+			if o and (o.Position - r.Position).Magnitude < 25 then
+				return false
+			end
+		end
+	end
+	return true
+end
+
+local function cellLit(cell: string?): boolean
+	if not cell then
+		return false
+	end
+	for _, f in CollectionService:GetTagged("RoomLight") do
+		if f:GetAttribute("CellId") == cell then
+			local l = f:FindFirstChildWhichIsA("Light")
+			if l and l.Enabled then
+				return true
+			end
+		end
+	end
+	return false
+end
+
+local function context(p: Player, s: PlayerState): EventSelector.Context
+	local cell = CellService:GetCell(p)
+	return {
+		State = s.Pacing.State,
+		Progress = ObjectiveService:Progress(),
+		Cell = cell,
+		CellTags = CellService:Tags(cell),
+		CellWear = if cell then WearService:Get(cell) else 0,
+		Alone = isAlone(p),
+		EchoHistorySeconds = EchoService:HistorySeconds(p),
+		Flags = ObjectiveService:GetFlags(),
+	}
+end
+
+local function tickPlayer(p: Player, dt: number, now: number)
+	local s = stateFor(p)
+	if not PlayerService:IsAlive(p) then
+		return
+	end
+	local cell = CellService:GetCell(p)
+	local changed = PacingModel.Step(s.Pacing, {
+		Dt = dt,
+		Running = PlayerService:GetStance(p) == "Run" and PlayerService:GetSpeed(p) > 1,
+		Dark = not cellLit(cell),
+		LodgerNear = LodgerService:IsActive() and LodgerService:DistanceTo(p) < 30,
+	}, DirectorConfig, roll)
+	if changed then
+		AnalyticsService:Log(p, "Pacing", { State = changed, Tension = math.floor(s.Pacing.Tension) })
+	end
+	-- A Peak resolves a little after its major beat, or when the Lodger leaves.
+	if
+		s.Pacing.State == "Peak"
+		and s.PeakEventAt
+		and now - s.PeakEventAt > 15
+		and not LodgerService:IsActive()
+	then
+		PacingModel.ResolvePeak(s.Pacing)
+		s.PeakEventAt = nil
+	end
+	local st = s.Pacing.State
+	if st ~= "Build" and st ~= "Peak" then
+		return
+	end
+	if st == "Peak" and s.PeakEventAt then
+		return -- one major beat per peak
+	end
+	local ctx = context(p, s)
+	local def = EventSelector.Select(HorrorEventService.Defs, ctx, s.History, now, DirectorConfig, roll)
+	if def and HorrorEventService:Play(p, def) then
+		EventSelector.Record(s.History, def, now, DirectorConfig)
+		PacingModel.AddTension(s.Pacing, 6 + def.Intensity * 5)
+		if st == "Peak" then
+			s.PeakEventAt = now
+		end
+		AnalyticsService:Log(p, "Event", { Id = def.Id, State = st, Cell = cell })
+	elseif def then
+		-- Selected but could not be built here (e.g. no visible history): short back-off.
+		s.History.LastByEvent[def.Id] = now - def.Cooldown + 10
+	end
+end
+
+local function debugPush(now: number)
+	if not RunService:IsStudio() then
+		return
+	end
+	local wear = {}
+	for id, w in WearService:All() do
+		wear[id] = WearMath.ToByte(w)
+	end
+	for _, p in Players:GetPlayers() do
+		local s = states[p]
+		if s then
+			local reasons = {}
+			local ctx = context(p, s)
+			for _, d in HorrorEventService.Defs do
+				reasons[d.Id] = EventSelector.Ineligible(d, ctx, s.History, now, DirectorConfig) or "ready"
+			end
+			Net.Fire(p, "DebugState", {
+				Pacing = s.Pacing.State,
+				PacingTime = math.floor(s.Pacing.StateTime),
+				PacingDuration = math.floor(s.Pacing.StateDuration),
+				Tension = math.floor(s.Pacing.Tension),
+				Cell = CellService:GetCell(p),
+				Wear = wear,
+				Lodger = LodgerService:State(),
+				Events = reasons,
+				Progress = ObjectiveService:Progress(),
+			})
+		end
+	end
+end
+
+-- Studio-only: lets the debug overlay force an event or a pacing state while tuning.
+function DirectorService:Force(p: Player, what: string)
+	local s = stateFor(p)
+	if what == "Build" or what == "Peak" or what == "Relax" or what == "Fade" then
+		PacingModel.Enter(s.Pacing, what :: any, DirectorConfig, roll)
+	else
+		local def = HorrorEventService:Get(what)
+		if def then
+			HorrorEventService:Play(p, def)
+		end
+	end
+end
+
+function DirectorService:Init(registry)
+	PlayerService = registry.PlayerService
+	CellService = registry.CellService
+	WearService = registry.WearService
+	EchoService = registry.EchoService
+	ObjectiveService = registry.ObjectiveService
+	HorrorEventService = registry.HorrorEventService
+	LodgerService = registry.LodgerService
+	AnalyticsService = registry.AnalyticsService
+
+	LodgerService.Took:Connect(function(p: Player)
+		local s = stateFor(p)
+		PacingModel.ForceRelax(s.Pacing, DirectorConfig.PostDeathRelaxSeconds, DirectorConfig, roll)
+		s.PeakEventAt = nil
+	end)
+	LodgerService.Withdrew:Connect(function(p: Player?)
+		if p and states[p] and states[p].Pacing.State == "Peak" then
+			PacingModel.ResolvePeak(states[p].Pacing)
+			states[p].PeakEventAt = nil
+		end
+	end)
+	HorrorEventService.Played:Connect(function(p: Player, def)
+		-- Scripted events (not chosen here) still count toward spacing and history.
+		if def.Scripted then
+			local s = stateFor(p)
+			EventSelector.Record(s.History, def, os.clock(), DirectorConfig)
+			if def.Intensity >= DirectorConfig.MajorIntensity then
+				PacingModel.Enter(s.Pacing, "Peak", DirectorConfig, roll)
+				s.PeakEventAt = os.clock()
+			end
+		end
+	end)
+	Players.PlayerRemoving:Connect(function(p)
+		states[p] = nil
+	end)
+end
+
+function DirectorService:Start()
+	while true do
+		local dt = task.wait(DirectorConfig.TickSeconds)
+		local now = os.clock()
+		for _, p in Players:GetPlayers() do
+			local ok, err = pcall(tickPlayer :: any, p, dt, now)
+			if not ok then
+				warn("[Director] " .. tostring(err))
+			end
+		end
+		debugPush(now)
+	end
+end
+
+return DirectorService
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="46">
+          <Properties>
+            <string name="Name">EchoService</string>
+            <string name="Source"><![CDATA[--!strict
+--[[
+	Records every player's recent history (plan §D.2) so the Director can replay it as echoes and
+	the Lodger can walk it. Positions are stored layout-local; actions reference a sample index.
+]]
+local Players = game:GetService("Players")
+
+local Shared = game:GetService("ReplicatedStorage"):WaitForChild("Shared")
+local EchoCodec = require(Shared.Logic.EchoCodec)
+local EchoConfig = require(Shared.Config.EchoConfig)
+local LayoutSpace = require(Shared.Util.LayoutSpace)
+local RingBuffer = require(Shared.Util.RingBuffer)
+
+type Sample = EchoCodec.Sample
+type Record = {
+	Samples: RingBuffer.RingBuffer<Sample>,
+	Actions: { { Total: number, Kind: number, Id: string } }, -- Total = sample count when it happened
+}
+
+local EchoService = {}
+EchoService.Kind = EchoCodec.ActionKind
+
+local records: { [Player]: Record } = {}
+local PlayerService: any
+
+local interval = 1 / EchoConfig.SampleHz
+local capacity = math.ceil(EchoConfig.HistorySeconds * EchoConfig.SampleHz)
+
+local function record(player: Player): Record
+	local r = records[player]
+	if not r then
+		r = { Samples = RingBuffer.new(capacity), Actions = {} }
+		records[player] = r
+	end
+	return r
+end
+
+function EchoService:HistorySeconds(player: Player): number
+	local r = records[player]
+	return if r then r.Samples:Size() * interval else 0
+end
+
+function EchoService:LogAction(player: Player, kind: number, id: string)
+	local r = record(player)
+	table.insert(r.Actions, { Total = r.Samples.Total, Kind = kind, Id = id })
+	-- Drop actions older than retained history.
+	local oldest = r.Samples.Total - r.Samples:Size()
+	while r.Actions[1] and r.Actions[1].Total < oldest do
+		table.remove(r.Actions, 1)
+	end
+end
+
+-- Ring index (1 = oldest) for a moment `ago` seconds in the past, or nil if outside history.
+local function indexAgo(r: Record, ago: number): number?
+	local n = r.Samples:Size()
+	local i = n - math.floor(ago / interval)
+	if i < 1 or i > n then
+		return nil
+	end
+	return i
+end
+
+-- Path covering [ago, ago - duration] (older to newer).
+function EchoService:Segment(player: Player, ago: number, duration: number): EchoCodec.Path?
+	local r = records[player]
+	if not r then
+		return nil
+	end
+	local first = indexAgo(r, ago)
+	if not first then
+		return nil
+	end
+	local n = r.Samples:Size()
+	local last = math.min(n, first + math.floor(duration / interval))
+	local samples = {}
+	for i = first, last do
+		table.insert(samples, r.Samples:Get(i) :: Sample)
+	end
+	-- Convert ring positions to sample Totals to slice the action log.
+	local base = r.Samples.Total - n -- Total value of the sample before ring index 1
+	local actions = {}
+	for _, a in r.Actions do
+		local ringIndex = a.Total - base
+		if ringIndex >= first and ringIndex <= last then
+			table.insert(actions, { Index = ringIndex - first + 1, Kind = a.Kind, Id = a.Id })
+		end
+	end
+	return { Interval = interval, Quantum = EchoConfig.Quantum, Samples = samples, Actions = actions }
+end
+
+-- Latest action of `kind` between minAgo and maxAgo seconds ago.
+function EchoService:FindAction(
+	player: Player,
+	kinds: { number },
+	minAgo: number,
+	maxAgo: number
+): (string?, number?)
+	local r = records[player]
+	if not r then
+		return nil, nil
+	end
+	local total = r.Samples.Total
+	for i = #r.Actions, 1, -1 do
+		local a = r.Actions[i]
+		local ago = (total - a.Total) * interval
+		if ago > maxAgo then
+			break
+		end
+		if ago >= minAgo and table.find(kinds, a.Kind) then
+			return a.Id, ago
+		end
+	end
+	return nil, nil
+end
+
+--[[
+	Finds a stretch of history the viewer could see from where they stand now: the first sample of the
+	stretch must be between minDist and maxDist away (world studs) and pass `visible(worldPos)`.
+	Returns how long ago that stretch starts.
+]]
+function EchoService:FindVisibleStretch(
+	player: Player,
+	minAgo: number,
+	maxAgo: number,
+	viewer: Vector3,
+	minDist: number,
+	maxDist: number,
+	visible: (Vector3) -> boolean,
+	filter: ((Sample) -> boolean)?
+): number?
+	local r = records[player]
+	if not r then
+		return nil
+	end
+	local n = r.Samples:Size()
+	local step = math.max(1, math.floor(1 / interval)) -- test once per second of history
+	local startAgo = math.min(maxAgo, (n - 1) * interval)
+	local ago = startAgo
+	while ago >= minAgo do
+		local i = indexAgo(r, ago)
+		if i then
+			local s = r.Samples:Get(i) :: Sample
+			if filter == nil or filter(s) then
+				local wp = LayoutSpace.ToWorld(s.X, s.Y, s.Z)
+				local d = (wp - viewer).Magnitude
+				if d >= minDist and d <= maxDist and visible(wp) then
+					return ago
+				end
+			end
+		end
+		ago -= step * interval
+	end
+	return nil
+end
+
+function EchoService:Encode(path: EchoCodec.Path): buffer
+	return EchoCodec.Encode(path)
+end
+
+function EchoService:Init(registry)
+	PlayerService = registry.PlayerService
+	local Interaction = registry.InteractionService
+	Interaction.Action:Connect(function(player: Player, kind: number, id: string)
+		EchoService:LogAction(player, kind, id)
+	end)
+	PlayerService.FlashlightChanged:Connect(function(player: Player, on: boolean)
+		EchoService:LogAction(
+			player,
+			if on then EchoCodec.ActionKind.FlashOn else EchoCodec.ActionKind.FlashOff,
+			""
+		)
+	end)
+	Players.PlayerRemoving:Connect(function(p)
+		records[p] = nil
+	end)
+end
+
+function EchoService:Start()
+	local F = EchoCodec.Flags
+	while true do
+		task.wait(interval)
+		for _, p in Players:GetPlayers() do
+			local root = PlayerService:GetRoot(p)
+			if root and PlayerService:IsAlive(p) then
+				local l = LayoutSpace.ToLocal(root.Position)
+				local look = root.CFrame.LookVector
+				local yaw = math.atan2(-look.X, -look.Z)
+				local flags = 0
+				if PlayerService:IsFlashlightOn(p) then
+					flags += F.Flashlight
+				end
+				local stance = PlayerService:GetStance(p)
+				if stance == "Run" then
+					flags += F.Running
+				elseif stance == "Crouch" then
+					flags += F.Crouching
+				end
+				record(p).Samples:Push({ X = l.X, Y = l.Y, Z = l.Z, Yaw = yaw, Flags = flags })
+			end
+		end
+	end
+end
+
+return EchoService
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="47">
+          <Properties>
+            <string name="Name">GreyboxBuilder</string>
+            <string name="Source"><![CDATA[--!strict
+--[[
+	Builds the Floor 4 East greybox from LevelLayout at server start (task F13), unless a
+	hand-built Workspace.Map already exists. Grey blocks only: no final art until the M1 gate.
+	Everything gameplay needs is found later through CollectionService tags, not paths.
+]]
+local CollectionService = game:GetService("CollectionService")
+local Lighting = game:GetService("Lighting")
+local PhysicsService = game:GetService("PhysicsService")
+local SoundService = game:GetService("SoundService")
+local Workspace = game:GetService("Workspace")
+
+local Shared = game:GetService("ReplicatedStorage"):WaitForChild("Shared")
+local Layout = require(Shared.Config.LevelLayout)
+local LayoutSpace = require(Shared.Util.LayoutSpace)
+
+local GreyboxBuilder = {}
+
+local H = Layout.Height
+local T = Layout.WallThickness
+local DW = Layout.DoorWidth
+local DH = Layout.DoorHeight
+
+local VOLUME_GROUP = "CellVolume"
+local WALL_COLOR = Color3.fromRGB(150, 150, 142)
+local CEIL_COLOR = Color3.fromRGB(110, 110, 106)
+
+local function part(parent: Instance, name: string, size: Vector3, cf: CFrame, color: Color3?): Part
+	local p = Instance.new("Part")
+	p.Name = name
+	p.Anchored = true
+	p.Size = size
+	p.CFrame = cf
+	p.Color = color or WALL_COLOR
+	p.Material = Enum.Material.SmoothPlastic
+	p.TopSurface = Enum.SurfaceType.Smooth
+	p.BottomSurface = Enum.SurfaceType.Smooth
+	p.Parent = parent
+	return p
+end
+
+local function w(x: number, y: number, z: number): Vector3
+	return LayoutSpace.ToWorld(x, y, z)
+end
+
+-- Builds one wall side (from..to along its run) with gaps for openings.
+local function buildSide(
+	parent: Instance,
+	axis: "X" | "Z",
+	at: number,
+	inset: number,
+	from: number,
+	to: number,
+	gaps: { { number } }
+)
+	table.sort(gaps, function(a, b)
+		return a[1] < b[1]
+	end)
+	local cursor = from
+	local function segment(a: number, b: number, y0: number, y1: number)
+		if b - a < 0.05 or y1 - y0 < 0.05 then
+			return
+		end
+		local mid = (a + b) / 2
+		local ym = (y0 + y1) / 2
+		if axis == "Z" then
+			part(parent, "Wall", Vector3.new(b - a, y1 - y0, T), CFrame.new(w(mid, ym, at + inset)))
+		else
+			part(parent, "Wall", Vector3.new(T, y1 - y0, b - a), CFrame.new(w(at + inset, ym, mid)))
+		end
+	end
+	for _, g in gaps do
+		local g0, g1, top = g[1], g[2], g[3]
+		segment(cursor, math.max(cursor, g0), 0, H)
+		segment(math.max(cursor, g0), g1, top, H) -- lintel
+		cursor = math.max(cursor, g1)
+	end
+	segment(cursor, to, 0, H)
+end
+
+local function openingsOn(cellId: string, axis: "X" | "Z", at: number): { { number } }
+	local gaps = {}
+	for _, o in Layout.Openings do
+		if o.Kind ~= "Fake" and o.Axis == axis and o.At == at and table.find(o.Cells, cellId) then
+			local width = o.Width or DW
+			local top = if o.Kind == "Arch" then 9 else DH
+			table.insert(gaps, { o.Center - width / 2, o.Center + width / 2, top })
+		end
+	end
+	return gaps
+end
+
+local function buildCell(map: Instance, c: any)
+	local r = c.Rect
+	local model = Instance.new("Model")
+	model.Name = "Cell_" .. c.Id
+	model:SetAttribute("CellId", c.Id)
+	model.Parent = map
+	local sx, sz = r[3] - r[1], r[4] - r[2]
+	local cx, cz = (r[1] + r[3]) / 2, (r[2] + r[4]) / 2
+	local fc = c.FloorColor or { 90, 90, 90 }
+
+	local floor = part(
+		model,
+		"Floor",
+		Vector3.new(sx, 1, sz),
+		CFrame.new(w(cx, -0.5, cz)),
+		Color3.fromRGB(fc[1], fc[2], fc[3])
+	)
+	floor:SetAttribute("CellId", c.Id)
+	CollectionService:AddTag(floor, "CellFloor")
+	part(model, "Ceiling", Vector3.new(sx, 1, sz), CFrame.new(w(cx, H + 0.5, cz)), CEIL_COLOR)
+
+	buildSide(model, "Z", r[2], T / 2, r[1], r[3], openingsOn(c.Id, "Z", r[2]))
+	buildSide(model, "Z", r[4], -T / 2, r[1], r[3], openingsOn(c.Id, "Z", r[4]))
+	buildSide(model, "X", r[1], T / 2, r[2], r[4], openingsOn(c.Id, "X", r[1]))
+	buildSide(model, "X", r[3], -T / 2, r[2], r[4], openingsOn(c.Id, "X", r[3]))
+
+	-- Invisible volume carrying the pathfinding label. LodgerService prices each label by wear,
+	-- which is how "it only walks where someone has walked" reaches PathfindingService.
+	local vol = part(model, "Volume", Vector3.new(sx, H, sz), CFrame.new(w(cx, H / 2, cz)))
+	vol.Transparency = 1
+	vol.CanCollide = false
+	vol.CanTouch = false
+	-- Left queryable so pathfinding sees the label; a collision group hides it from raycasts.
+	vol.CollisionGroup = VOLUME_GROUP
+	vol.AudioCanCollide = false
+	vol:SetAttribute("CellId", c.Id)
+	CollectionService:AddTag(vol, "CellVolume")
+	local mod = Instance.new("PathfindingModifier")
+	mod.Label = "Cell_" .. c.Id
+	mod.Parent = vol
+
+	if c.Tags and table.find(c.Tags, "Water") then
+		local water = part(
+			model,
+			"Water",
+			Vector3.new(sx - 1, 0.3, sz - 1),
+			CFrame.new(w(cx, 0.15, cz)),
+			Color3.fromRGB(40, 60, 70)
+		)
+		water.Transparency = 0.4
+		water.CanCollide = false
+		water.CanQuery = false
+		water.AudioCanCollide = false
+	end
+	return model
+end
+
+local function openingFrame(o: any, yCenter: number): CFrame
+	if o.Axis == "Z" then
+		return CFrame.new(w(o.Center, yCenter, o.At))
+	else
+		return CFrame.new(w(o.At, yCenter, o.Center)) * CFrame.Angles(0, math.rad(90), 0)
+	end
+end
+
+local function buildOpening(map: Instance, o: any)
+	if o.Kind == "Arch" then
+		return
+	end
+	local model = Instance.new("Model")
+	model.Name = "Door_" .. o.Id
+	model:SetAttribute("OpeningId", o.Id)
+	model:SetAttribute("Kind", o.Kind)
+	model:SetAttribute("Open", false)
+	model:SetAttribute("Locked", o.Kind == "Lift" or o.Kind == "Fake")
+	if o.Label then
+		model:SetAttribute("Label", o.Label)
+	end
+	model.Parent = map
+
+	local cf = openingFrame(o, DH / 2)
+	local panel: Part
+	if o.Kind == "Fake" then
+		-- Slab on the corridor face of a solid wall; which face depends on the side the corridor is on.
+		local corridorRect = nil
+		for _, c in Layout.Cells do
+			if c.Id == o.Cells[1] then
+				corridorRect = c.Rect
+			end
+		end
+		local sign = 1
+		if corridorRect and o.Axis == "Z" and o.At == corridorRect[4] then
+			sign = -1
+		end
+		panel = part(
+			model,
+			"Panel",
+			Vector3.new(DW - 0.6, DH - 0.2, 0.3),
+			cf * CFrame.new(0, 0, sign * (T + 0.15)),
+			Color3.fromRGB(92, 70, 52)
+		)
+	elseif o.Kind == "Plastic" then
+		panel = part(model, "Panel", Vector3.new(DW, DH, 0.1), cf, Color3.fromRGB(220, 225, 230))
+		panel.Transparency = 0.45
+		panel.Material = Enum.Material.Glass
+		panel.AudioCanCollide = false
+	elseif o.Kind == "Lift" then
+		panel = part(model, "Panel", Vector3.new(DW, DH, 0.4), cf, Color3.fromRGB(150, 155, 160))
+		panel.Material = Enum.Material.DiamondPlate
+	else
+		panel = part(model, "Panel", Vector3.new(DW - 0.2, DH - 0.1, 0.35), cf, Color3.fromRGB(92, 70, 52))
+	end
+	panel:SetAttribute("ClosedCFrame", panel.CFrame)
+	model.PrimaryPart = panel
+	-- Paths may run through closed doors; the Lodger opens them as it reaches them.
+	if o.Kind == "Door" then
+		local pm = Instance.new("PathfindingModifier")
+		pm.PassThrough = true
+		pm.Parent = panel
+	end
+	CollectionService:AddTag(model, "Door")
+end
+
+local function buildPoint(map: Instance, pt: any)
+	local pos = w(pt.Pos[1], pt.Pos[2], pt.Pos[3])
+	local kind = pt.Kind
+	if kind == "Spawn" then
+		local s = Instance.new("SpawnLocation")
+		s.Name = "Spawn"
+		s.Anchored = true
+		s.Size = Vector3.new(4, 0.2, 4)
+		s.CFrame = CFrame.new(pos - Vector3.new(0, pt.Pos[2] - 0.1, 0)) * CFrame.Angles(0, math.rad(-90), 0)
+		s.Transparency = 1
+		s.CanCollide = false
+		s.Duration = 0
+		s.Neutral = true
+		s.Parent = map
+		CollectionService:AddTag(s, "Checkpoint")
+		return
+	end
+	if kind == "LodgerHome" then
+		local a = part(map, "LodgerHome", Vector3.new(1, 1, 1), CFrame.new(pos))
+		a.Transparency = 1
+		a.CanCollide = false
+		a.CanQuery = false
+		CollectionService:AddTag(a, "LodgerHome")
+		return
+	end
+	if kind == "Fluorescent" or kind == "Lamp" or kind == "Sodium" then
+		local fixture = part(
+			map,
+			kind,
+			if kind == "Fluorescent" then Vector3.new(4, 0.3, 0.8) else Vector3.new(0.8, 0.8, 0.8),
+			CFrame.new(pos)
+		)
+		fixture.CanCollide = false
+		fixture.CastShadow = false
+		local working = pt.Data == nil or pt.Data.Working ~= false
+		local light: Light
+		if kind == "Fluorescent" then
+			local l = Instance.new("SurfaceLight")
+			l.Face = Enum.NormalId.Bottom
+			l.Angle = 120
+			l.Range = 16
+			l.Brightness = 1.1
+			l.Color = Color3.fromRGB(205, 225, 220)
+			light = l
+			fixture.Material = if working then Enum.Material.Neon else Enum.Material.SmoothPlastic
+			fixture.Color = Color3.fromRGB(200, 215, 210)
+		elseif kind == "Lamp" then
+			local l = Instance.new("PointLight")
+			l.Range = 14
+			l.Brightness = 0.9
+			l.Color = Color3.fromRGB(255, 190, 120)
+			light = l
+		else
+			local l = Instance.new("SpotLight")
+			l.Face = Enum.NormalId.Right
+			l.Angle = 60
+			l.Range = 24
+			l.Brightness = 1.4
+			l.Color = Color3.fromRGB(255, 150, 60)
+			light = l
+		end
+		light.Shadows = kind ~= "Fluorescent"
+		light.Enabled = working
+		light.Parent = fixture
+		fixture:SetAttribute("CellId", pt.Cell)
+		CollectionService:AddTag(fixture, "RoomLight")
+		return
+	end
+	-- Interactables: notes, tapes, items, fuse box.
+	local sizes = {
+		Note = Vector3.new(0.2, 1.4, 1),
+		Tape = Vector3.new(1.2, 0.5, 0.8),
+		Item = Vector3.new(0.5, 0.5, 1),
+		FuseBox = Vector3.new(2, 2.6, 0.6),
+	}
+	local colors = {
+		Note = Color3.fromRGB(230, 225, 205),
+		Tape = Color3.fromRGB(40, 40, 44),
+		Item = Color3.fromRGB(210, 170, 60),
+		FuseBox = Color3.fromRGB(70, 80, 70),
+	}
+	local p = part(map, pt.Id, sizes[kind] or Vector3.new(1, 1, 1), CFrame.new(pos), colors[kind])
+	p.CanCollide = kind == "FuseBox"
+	p:SetAttribute("InteractKind", kind)
+	p:SetAttribute("PointId", pt.Id)
+	p:SetAttribute("CellId", pt.Cell)
+	if pt.Data then
+		for k, v in pt.Data do
+			p:SetAttribute(k, v)
+		end
+	end
+	CollectionService:AddTag(p, "Interactable")
+end
+
+local function setupLighting()
+	-- LightingStyle / PrioritizeLightingQuality replaced Lighting.Technology (Unified Lighting).
+	-- pcall because S5 has not yet confirmed they are script-writable.
+	pcall(function()
+		(Lighting :: any).LightingStyle = Enum.LightingStyle.Realistic
+	end)
+	pcall(function()
+		(Lighting :: any).PrioritizeLightingQuality = true
+	end)
+	Lighting.Ambient = Color3.fromRGB(5, 5, 6)
+	Lighting.OutdoorAmbient = Color3.fromRGB(8, 8, 9)
+	Lighting.Brightness = 0
+	Lighting.ClockTime = 0
+	Lighting.EnvironmentDiffuseScale = 0
+	Lighting.EnvironmentSpecularScale = 0.1
+	Lighting.ExposureCompensation = 0
+	local atm = Lighting:FindFirstChildOfClass("Atmosphere") or Instance.new("Atmosphere")
+	atm.Density = 0.32
+	atm.Haze = 0.6
+	atm.Glare = 0
+	atm.Offset = 0
+	atm.Color = Color3.fromRGB(30, 34, 36)
+	atm.Decay = Color3.fromRGB(10, 12, 14)
+	atm.Parent = Lighting
+	local cc = Lighting:FindFirstChild("Grade") :: ColorCorrectionEffect?
+		or Instance.new("ColorCorrectionEffect")
+	cc.Name = "Grade"
+	cc.Saturation = -0.35
+	cc.Contrast = 0.12
+	cc.TintColor = Color3.fromRGB(225, 238, 235)
+	cc.Parent = Lighting
+	pcall(function()
+		(SoundService :: any).AcousticSimulationEnabled = true
+	end)
+end
+
+function GreyboxBuilder:Init()
+	setupLighting()
+	-- Cell volumes must never block rays (sight, interaction, audio occlusion) or bodies.
+	pcall(function()
+		PhysicsService:RegisterCollisionGroup(VOLUME_GROUP)
+	end)
+	PhysicsService:CollisionGroupSetCollidable(VOLUME_GROUP, "Default", false)
+	if Workspace:FindFirstChild("Map") then
+		return -- a hand-built map takes precedence
+	end
+	local base = Workspace:FindFirstChild("Baseplate")
+	if base then
+		base:Destroy()
+	end
+	local map = Instance.new("Folder")
+	map.Name = "Map"
+	for _, c in Layout.Cells do
+		buildCell(map, c)
+	end
+	for _, o in Layout.Openings do
+		buildOpening(map, o)
+	end
+	for _, wd in Layout.ExtraWalls do
+		local len = wd.To - wd.From
+		local mid = (wd.From + wd.To) / 2
+		if wd.Axis == "X" then
+			part(map, "Chicane", Vector3.new(T, H, len), CFrame.new(w(wd.At, H / 2, mid)))
+		else
+			part(map, "Chicane", Vector3.new(len, H, T), CFrame.new(w(mid, H / 2, wd.At)))
+		end
+	end
+	for _, pt in Layout.Points do
+		buildPoint(map, pt)
+	end
+	map.Parent = Workspace
+end
+
+return GreyboxBuilder
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="48">
+          <Properties>
+            <string name="Name">HorrorEventService</string>
+            <string name="Source"><![CDATA[--!strict
+--[[
+	Turns an event definition into a concrete payload for one player and sends it (plan §J.3).
+	Builders are per Category, so a new event of an existing category is a data file only.
+	The Director decides *when*; this service decides *what exactly* and whether it can happen now.
+]]
+local CollectionService = game:GetService("CollectionService")
+local Players = game:GetService("Players")
+local Workspace = game:GetService("Workspace")
+
+local Shared = game:GetService("ReplicatedStorage"):WaitForChild("Shared")
+local EchoCodec = require(Shared.Logic.EchoCodec)
+local Events = require(Shared.Events)
+local LayoutSpace = require(Shared.Util.LayoutSpace)
+local Net = require(Shared.Net)
+local Signal = require(Shared.Util.Signal)
+
+type EventDef = any
+type Payload = { [string]: any }
+
+local HorrorEventService = {}
+HorrorEventService.Defs = Events :: { EventDef }
+HorrorEventService.Played = Signal.new() :: Signal.Signal<Player, EventDef, Payload>
+
+local byId: { [string]: EventDef } = {}
+for _, d in Events do
+	byId[d.Id] = d
+end
+
+local PlayerService: any
+local EchoService: any
+local InteractionService: any
+local LodgerService: any
+local nextToken = 0
+local pending: { [number]: { player: Player, id: string } } = {}
+
+local rayParams = RaycastParams.new()
+rayParams.FilterType = Enum.RaycastFilterType.Exclude
+rayParams.IgnoreWater = true
+
+-- Is world point `p` visible from the player's head (walls and closed doors block)?
+local function visibleFrom(player: Player, p: Vector3): boolean
+	local head = PlayerService:GetHead(player)
+	if not head then
+		return false
+	end
+	local exclude = {}
+	for _, pl in Players:GetPlayers() do
+		if pl.Character then
+			table.insert(exclude, pl.Character)
+		end
+	end
+	local dyn = Workspace:FindFirstChild("Dynamic")
+	if dyn then
+		table.insert(exclude, dyn)
+	end
+	rayParams.FilterDescendantsInstances = exclude
+	local target = p + Vector3.new(0, 1.5, 0)
+	local dir = target - head.Position
+	return Workspace:Raycast(head.Position, dir, rayParams) == nil
+end
+HorrorEventService.VisibleFrom = visibleFrom
+
+local Builders: { [string]: (Player, EventDef) -> Payload? } = {}
+
+Builders.EchoSound = function(_player, def)
+	return { Duration = def.Params.Duration, Lag = def.Params.Lag }
+end
+
+Builders.EchoObject = function(player, def)
+	local P = def.Params
+	local K = EchoCodec.ActionKind
+	local id, ago = EchoService:FindAction(player, { K.DoorOpen, K.DoorClose }, P.MinAgo, P.MaxAgo)
+	if not id then
+		return nil
+	end
+	local door = InteractionService:FindDoor(id)
+	local head = PlayerService:GetHead(player)
+	if not door or not head or door:GetAttribute("Kind") ~= "Door" then
+		return nil
+	end
+	local d = (door:GetPivot().Position - head.Position).Magnitude
+	if d > P.MaxDistance or d < P.MinDistance then
+		return nil
+	end
+	return { Opening = id, Ago = ago }
+end
+
+local function stretchPayload(player: Player, def: EventDef, filter: ((any) -> boolean)?): Payload?
+	local P = def.Params
+	local head = PlayerService:GetHead(player)
+	if not head then
+		return nil
+	end
+	local ago = EchoService:FindVisibleStretch(
+		player,
+		P.MinAgo,
+		P.MaxAgo,
+		head.Position,
+		P.MinDistance,
+		P.MaxDistance,
+		function(wp)
+			return visibleFrom(player, wp)
+		end,
+		filter
+	)
+	if not ago then
+		return nil
+	end
+	local path = EchoService:Segment(player, ago, P.Duration)
+	if not path or #path.Samples < 4 then
+		return nil
+	end
+	return { Path = EchoService:Encode(path), UserId = player.UserId, Origin = LayoutSpace.Origin }
+end
+
+Builders.EchoLight = function(player, def)
+	return stretchPayload(player, def, function(s)
+		return bit32.band(s.Flags, EchoCodec.Flags.Flashlight) ~= 0
+	end)
+end
+
+Builders.EchoFigure = function(player, def)
+	return stretchPayload(player, def, nil)
+end
+
+Builders.Silence = function(_player, def)
+	return { Duration = def.Params.Duration }
+end
+
+Builders.Fake = function(player, def)
+	local P = def.Params
+	local pos: Vector3
+	if P.Opening then
+		local door = InteractionService:FindDoor(P.Opening)
+		if not door then
+			return nil
+		end
+		pos = door:GetPivot().Position
+	elseif P.Above then
+		local root = PlayerService:GetRoot(player)
+		if not root then
+			return nil
+		end
+		pos = root.Position + Vector3.new(0, 12, 0)
+	else
+		return nil
+	end
+	return { Sound = P.Sound, Position = pos, Repeat = P.Repeat or 1 }
+end
+
+Builders.Lodger = function(player, def)
+	local ok = LodgerService:Wake(player, def.Params.First == true)
+	if not ok then
+		return nil
+	end
+	if def.Params.LightsOut then
+		for _, fixture in CollectionService:GetTagged("RoomLight") do
+			if table.find(def.Params.LightsOut, fixture:GetAttribute("CellId")) then
+				local light = fixture:FindFirstChildWhichIsA("Light")
+				if light and light.Enabled then
+					light.Enabled = false
+					fixture:SetAttribute("CutByLodger", true)
+				end
+			end
+		end
+	end
+	return { First = def.Params.First }
+end
+
+Builders.LiftKnock = function(player, def)
+	local lift = InteractionService:FindDoor("LiftDoor")
+	if not lift then
+		return nil
+	end
+	-- Your own knock on 4A, replayed on the lift door from the lobby side.
+	local knocked = EchoService:FindAction(player, { EchoCodec.ActionKind.Knock }, 0, 1e9) ~= nil
+	InteractionService:SetDoorOpen(lift, false)
+	return {
+		Delay = def.Params.Delay,
+		Position = lift:GetPivot().Position - Vector3.new(1.5, 0, 0),
+		Repeat = if knocked then 2 else 3,
+	}
+end
+
+function HorrorEventService:Get(id: string): EventDef?
+	return byId[id]
+end
+
+-- Builds and sends an event to one player. Returns true if it actually played.
+function HorrorEventService:Play(player: Player, def: EventDef): boolean
+	local builder = Builders[def.Category]
+	if not builder then
+		warn("[HorrorEvent] no builder for category " .. tostring(def.Category))
+		return false
+	end
+	local ok, payload = pcall(builder, player, def)
+	if not ok then
+		warn("[HorrorEvent] " .. def.Id .. " failed: " .. tostring(payload))
+		return false
+	end
+	if payload == nil then
+		return false
+	end
+	nextToken += 1
+	payload.Token = nextToken
+	payload.Id = def.Id
+	payload.Category = def.Category
+	pending[nextToken] = { player = player, id = def.Id }
+	Net.Fire(player, "EventPlay", payload)
+	HorrorEventService.Played:Fire(player, def, payload)
+	return true
+end
+
+function HorrorEventService:PlayScripted(id: string, player: Player): boolean
+	local def = byId[id]
+	assert(def, "unknown event " .. id)
+	return self:Play(player, def)
+end
+
+-- Restores lights cut by a Lodger event (called when it withdraws).
+function HorrorEventService:RestoreLights()
+	for _, fixture in CollectionService:GetTagged("RoomLight") do
+		if fixture:GetAttribute("CutByLodger") then
+			fixture:SetAttribute("CutByLodger", nil)
+			local light = fixture:FindFirstChildWhichIsA("Light")
+			if light then
+				light.Enabled = true
+			end
+		end
+	end
+end
+
+function HorrorEventService:Init(registry)
+	PlayerService = registry.PlayerService
+	EchoService = registry.EchoService
+	InteractionService = registry.InteractionService
+	LodgerService = registry.LodgerService
+	Net.OnServer("EventFeedback", function(player, token: number, noticed: boolean)
+		local p = pending[token]
+		if p and p.player == player then
+			pending[token] = nil
+			registry.AnalyticsService:Log(player, "EventFeedback", { Id = p.id, Noticed = noticed })
+		end
+	end)
+end
+
+return HorrorEventService
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="49">
+          <Properties>
+            <string name="Name">InteractionService</string>
+            <string name="Source"><![CDATA[--!strict
+--[[
+	Validates every interaction (plan §G.3: never trust the client) and owns door state.
+	Doors: the server owns Open/Locked and collision; clients animate the panel locally.
+]]
+local CollectionService = game:GetService("CollectionService")
+
+local Shared = game:GetService("ReplicatedStorage"):WaitForChild("Shared")
+local EchoCodec = require(Shared.Logic.EchoCodec)
+local Net = require(Shared.Net)
+local PlayerConfig = require(Shared.Config.PlayerConfig)
+local Signal = require(Shared.Util.Signal)
+
+local InteractionService = {}
+-- (player, EchoCodec.ActionKind, id)
+InteractionService.Action = Signal.new() :: Signal.Signal<Player, number, string>
+-- (player | nil, worldPosition, loudness 0..1, reason) for the Lodger's hearing
+InteractionService.Noise = Signal.new() :: Signal.Signal<Player?, Vector3, number, string>
+-- (player, interactable part) for objective logic
+InteractionService.Used = Signal.new() :: Signal.Signal<Player, BasePart>
+
+local PLASTIC_CUT_SECONDS = 1.6
+local K = EchoCodec.ActionKind
+
+local PlayerService: any
+local holds: { [Player]: { target: Instance, started: number } } = {}
+
+local function doorModel(target: Instance): Model?
+	local m = target:IsA("Model") and target or target:FindFirstAncestorOfClass("Model")
+	if m and CollectionService:HasTag(m, "Door") then
+		return m :: Model
+	end
+	return nil
+end
+
+local function withinReach(player: Player, target: Instance): boolean
+	local head = PlayerService:GetHead(player)
+	if not head or not PlayerService:IsAlive(player) then
+		return false
+	end
+	local pos: Vector3
+	if target:IsA("BasePart") then
+		pos = target.Position
+	elseif target:IsA("Model") then
+		pos = target:GetPivot().Position
+	else
+		return false
+	end
+	-- Generous margin over the client's reach for latency and part size.
+	return (pos - head.Position).Magnitude <= PlayerConfig.InteractDistance + 4
+end
+
+function InteractionService:FindDoor(openingId: string): Model?
+	for _, m in CollectionService:GetTagged("Door") do
+		if m:GetAttribute("OpeningId") == openingId then
+			return m :: Model
+		end
+	end
+	return nil
+end
+
+function InteractionService:IsDoorClosed(openingId: string): boolean
+	local m = self:FindDoor(openingId)
+	if not m then
+		return false -- arches have no door
+	end
+	return m:GetAttribute("Open") ~= true
+end
+
+function InteractionService:SetDoorOpen(model: Model, open: boolean)
+	if model:GetAttribute("Open") == open then
+		return
+	end
+	model:SetAttribute("Open", open)
+	local panel = model.PrimaryPart
+	if panel then
+		panel.CanCollide = not open
+		panel.CanQuery = not open
+		panel.AudioCanCollide = not open
+	end
+end
+
+function InteractionService:SetLocked(model: Model, locked: boolean)
+	model:SetAttribute("Locked", locked)
+end
+
+local function sfx(sound: string, position: Vector3)
+	Net.FireAll("EventPlay", { Category = "Sfx", Sound = sound, Position = position })
+end
+
+local function useDoor(player: Player, model: Model, action: string)
+	local id = model:GetAttribute("OpeningId") :: string
+	local kind = model:GetAttribute("Kind")
+	local pos = model:GetPivot().Position
+	if action == "Knock" then
+		sfx("DoorKnock", pos)
+		InteractionService.Action:Fire(player, K.Knock, id)
+		InteractionService.Noise:Fire(player, pos, 0.6, "Knock")
+		return
+	end
+	if kind == "Fake" or kind == "Plastic" then
+		return -- fake doors never open; plastic needs the hold action
+	end
+	if model:GetAttribute("Locked") == true then
+		sfx("DoorLocked", pos)
+		return
+	end
+	local open = model:GetAttribute("Open") ~= true
+	InteractionService:SetDoorOpen(model, open)
+	sfx(if open then "DoorOpen" else "DoorClose", pos)
+	InteractionService.Action:Fire(player, if open then K.DoorOpen else K.DoorClose, id)
+	-- Running into a door is a slam.
+	local loud = if PlayerService:GetStance(player) == "Run" then 0.8 else 0.25
+	InteractionService.Noise:Fire(player, pos, loud, "Door")
+end
+
+function InteractionService:Init(registry)
+	PlayerService = registry.PlayerService
+
+	Net.OnServer("Interact", function(player, target: Instance, action: string)
+		if not withinReach(player, target) then
+			return
+		end
+		local door = doorModel(target)
+		if door then
+			if action == "Use" or action == "Knock" then
+				useDoor(player, door, action)
+			end
+			return
+		end
+		if
+			target:IsA("BasePart")
+			and CollectionService:HasTag(target, "Interactable")
+			and action == "Use"
+		then
+			InteractionService.Used:Fire(player, target)
+		end
+	end)
+
+	Net.OnServer("HoldInteract", function(player, target: Instance, phase: string)
+		if phase == "End" then
+			holds[player] = nil
+			return
+		end
+		local door = doorModel(target)
+		if not door or door:GetAttribute("Kind") ~= "Plastic" or door:GetAttribute("Open") == true then
+			return
+		end
+		if not withinReach(player, door) then
+			return
+		end
+		local started = os.clock()
+		holds[player] = { target = door, started = started }
+		sfx("PlasticTear", door:GetPivot().Position)
+		task.delay(PLASTIC_CUT_SECONDS, function()
+			local h = holds[player]
+			if h and h.target == door and h.started == started and withinReach(player, door) then
+				holds[player] = nil
+				InteractionService:SetDoorOpen(door, true)
+				local panel = door.PrimaryPart
+				if panel then
+					panel.Transparency = 1
+				end
+				InteractionService.Action:Fire(player, K.DoorOpen, door:GetAttribute("OpeningId") :: string)
+			end
+		end)
+	end)
+end
+
+return InteractionService
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="50">
+          <Properties>
+            <string name="Name">LodgerService</string>
+            <string name="Source"><![CDATA[--!strict
+--[[
+	The Lodger (plan §D.3, §I). Decisions come from Logic/LodgerBrain; this service gathers
+	perception, moves the rig, and enforces the rule: it can only enter worn cells.
+	Wear reaches PathfindingService through per-cell PathfindingModifier labels priced by wear.
+]]
+local CollectionService = game:GetService("CollectionService")
+local PathfindingService = game:GetService("PathfindingService")
+local Players = game:GetService("Players")
+local Workspace = game:GetService("Workspace")
+
+local Shared = game:GetService("ReplicatedStorage"):WaitForChild("Shared")
+local AssetIds = require(Shared.Config.AssetIds)
+local CellGraph = require(Shared.Logic.CellGraph)
+local EchoConfig = require(Shared.Config.EchoConfig)
+local LayoutSpace = require(Shared.Util.LayoutSpace)
+local LodgerBrain = require(Shared.Logic.LodgerBrain)
+local LodgerConfig = require(Shared.Config.LodgerConfig)
+local Net = require(Shared.Net)
+local PlayerConfig = require(Shared.Config.PlayerConfig)
+local Signal = require(Shared.Util.Signal)
+
+local LodgerService = {}
+LodgerService.StateChanged = Signal.new() :: Signal.Signal<string, Player?>
+LodgerService.Withdrew = Signal.new() :: Signal.Signal<Player?>
+LodgerService.Took = Signal.new() :: Signal.Signal<Player>
+
+local PlayerService: any
+local CellService: any
+local WearService: any
+local EchoService: any
+local InteractionService: any
+local HorrorEventService: any
+local AnalyticsService: any
+
+local brain = LodgerBrain.New()
+local target: Player? = nil
+local rig: Model? = nil
+local humanoid: Humanoid? = nil
+local root: BasePart? = nil
+local walkTrack: AnimationTrack? = nil
+
+local route: { Vector3 } = {} -- current waypoints
+local routeIndex = 1
+local lastRepath = 0
+local lastKnown: Vector3? = nil
+local noise = 0 -- loudest attenuated noise heard since last tick
+local withdrawUntil = 0
+
+local TICK = 0.15
+local Cfg = LodgerConfig
+
+local function dynamicFolder(): Folder
+	local f = Workspace:FindFirstChild("Dynamic")
+	if not f then
+		f = Instance.new("Folder")
+		f.Name = "Dynamic"
+		f.Parent = Workspace
+	end
+	return f :: Folder
+end
+
+local function setLook(transparency: number, grey: boolean)
+	if not rig then
+		return
+	end
+	for _, d in rig:GetDescendants() do
+		if d:IsA("BasePart") and d.Name ~= "HumanoidRootPart" then
+			d.Transparency = transparency
+			if grey then
+				local c = d.Color
+				local l = (c.R + c.G + c.B) / 3
+				d.Color = Color3.new(l, l, l)
+			end
+		elseif d:IsA("Decal") then
+			d.Transparency = transparency
+		end
+	end
+end
+
+local function despawn()
+	if rig then
+		rig:Destroy()
+	end
+	rig, humanoid, root, walkTrack = nil, nil, nil, nil
+	route = {}
+end
+
+local function spawnRig(asPlayer: Player, at: Vector3): boolean
+	despawn()
+	local character = asPlayer.Character
+	if not character then
+		return false
+	end
+	character.Archivable = true
+	local clone = character:Clone()
+	if not clone then
+		return false
+	end
+	for _, d in clone:GetDescendants() do
+		if
+			d:IsA("BaseScript")
+			or d:IsA("Light")
+			or d:IsA("Attachment") and d.Name == "FlashlightAttachment"
+		then
+			d:Destroy()
+		elseif d:IsA("BasePart") then
+			d.CanCollide = false
+			d.CanTouch = false
+			d.AudioCanCollide = false
+		end
+	end
+	clone.Name = "Lodger"
+	local h = clone:FindFirstChildOfClass("Humanoid") :: Humanoid
+	local r = clone:FindFirstChild("HumanoidRootPart") :: BasePart
+	if not h or not r then
+		clone:Destroy()
+		return false
+	end
+	r.CanCollide = true
+	h.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
+	h.HealthDisplayType = Enum.HumanoidHealthDisplayType.AlwaysOff
+	h.WalkSpeed = Cfg.WalkSpeed
+	h.JumpPower = 0
+	h.BreakJointsOnDeath = false
+	clone:SetAttribute("State", brain.State)
+	clone:PivotTo(CFrame.new(at + Vector3.new(0, 3, 0)))
+	CollectionService:AddTag(clone, "Lodger")
+	clone.Parent = dynamicFolder()
+	r:SetNetworkOwner(nil)
+	rig, humanoid, root = clone, h, r
+
+	local animator = h:FindFirstChildOfClass("Animator") or Instance.new("Animator", h)
+	local ok, track = pcall(function()
+		local a = Instance.new("Animation")
+		a.AnimationId = AssetIds.Animations.Walk
+		return (animator :: Animator):LoadAnimation(a)
+	end)
+	if ok then
+		walkTrack = track
+	end
+	return true
+end
+
+local function cellOf(p: Vector3): string?
+	return CellService:CellAt(p)
+end
+
+local function canEnter(id: string): boolean
+	return WearService:CanLodgerEnter(id)
+end
+
+local function reachable(fromCell: string?, toCell: string?): boolean
+	if not fromCell or not toCell then
+		return false
+	end
+	return CellGraph.Route(CellService.Graph, fromCell, toCell, canEnter) ~= nil
+end
+
+local function costs(): { [string]: number }
+	local c: { [string]: number } = {}
+	for _, id in CellService.Graph.Order do
+		c["Cell_" .. id] = if canEnter(id) then 1 else math.huge
+	end
+	return c
+end
+
+local function computePath(to: Vector3): { Vector3 }?
+	if not root then
+		return nil
+	end
+	local path = PathfindingService:CreatePath({
+		AgentRadius = Cfg.AgentRadius,
+		AgentHeight = Cfg.AgentHeight,
+		AgentCanJump = false,
+		WaypointSpacing = 4,
+		Costs = costs(),
+	})
+	local ok = pcall(function()
+		path:ComputeAsync(root.Position, to)
+	end)
+	if not ok or path.Status ~= Enum.PathStatus.Success then
+		return nil
+	end
+	local pts = {}
+	for _, wp in path:GetWaypoints() do
+		table.insert(pts, wp.Position)
+	end
+	return pts
+end
+
+local function setRoute(points: { Vector3 })
+	route = points
+	routeIndex = 1
+end
+
+local function stopMoving()
+	route = {}
+	if humanoid and root then
+		humanoid:MoveTo(root.Position)
+	end
+end
+
+-- Opens closed doors the Lodger walks into (it is a tenant; doors don't stop it).
+local function openDoorsNear()
+	if not root then
+		return
+	end
+	for _, door in CollectionService:GetTagged("Door") do
+		if door:GetAttribute("Kind") == "Door" and door:GetAttribute("Open") ~= true then
+			local d = (door:GetPivot().Position - root.Position) * Vector3.new(1, 0, 1)
+			if d.Magnitude < 4.5 then
+				InteractionService:SetDoorOpen(door, true)
+				Net.FireAll(
+					"EventPlay",
+					{ Category = "Sfx", Sound = "DoorOpen", Position = door:GetPivot().Position }
+				)
+			end
+		end
+	end
+end
+
+local function followRoute(): boolean -- returns true when finished
+	if not humanoid or not root then
+		return true
+	end
+	while routeIndex <= #route do
+		local goal = route[routeIndex]
+		local flat = (goal - root.Position) * Vector3.new(1, 0, 1)
+		if flat.Magnitude < 2 then
+			routeIndex += 1
+		else
+			-- Never step into a cell it may not enter (route can go stale as dust settles).
+			local c = cellOf(goal)
+			if c and not canEnter(c) and c ~= cellOf(root.Position) then
+				route = {}
+				return true
+			end
+			humanoid:MoveTo(goal)
+			return false
+		end
+	end
+	return true
+end
+
+local rayParams = RaycastParams.new()
+rayParams.FilterType = Enum.RaycastFilterType.Exclude
+
+local function canSee(p: Player): boolean
+	if not root or not rig then
+		return false
+	end
+	local head = PlayerService:GetHead(p)
+	local myHead = rig:FindFirstChild("Head") :: BasePart?
+	if not head or not myHead then
+		return false
+	end
+	local to = head.Position - myHead.Position
+	local range = if PlayerService:IsFlashlightOn(p) then Cfg.SightRangeFlashlightOn else Cfg.SightRange
+	if to.Magnitude > range then
+		return false
+	end
+	-- Cone check, except in Deviate/Search where it is actively looking around.
+	if brain.State == "Mimic" or brain.State == "Pursue" then
+		local cos = root.CFrame.LookVector:Dot(to.Unit)
+		if cos < math.cos(math.rad(Cfg.SightConeDegrees / 2)) then
+			return false
+		end
+	end
+	local exclude: { Instance } = { rig :: any }
+	local dyn = Workspace:FindFirstChild("Dynamic")
+	if dyn then
+		table.insert(exclude, dyn)
+	end
+	rayParams.FilterDescendantsInstances = exclude
+	local hit = Workspace:Raycast(myHead.Position, to, rayParams)
+	return hit ~= nil and hit.Instance:IsDescendantOf(p.Character :: any)
+end
+
+local function lookingAtMe(p: Player): boolean
+	local head = PlayerService:GetHead(p)
+	local look = PlayerService:GetLook(p)
+	if not head or not look or not root then
+		return false
+	end
+	local to = (root.Position + Vector3.new(0, 1.5, 0) - head.Position).Unit
+	return look:Dot(to) > 0.85
+end
+
+-- Noise propagates through the room graph; closed doors on the way muffle it.
+function LodgerService:Hear(source: Vector3, loudness: number)
+	if not root or brain.State == "Dormant" or brain.State == "Withdraw" then
+		return
+	end
+	local from, to = cellOf(source), cellOf(root.Position)
+	local muffle = 1
+	if from and to then
+		local r = CellGraph.Route(CellService.Graph, from, to, function()
+			return true
+		end)
+		if r then
+			local closed = CellGraph.ClosedDoorsAlong(CellService.Graph, r, function(openingId)
+				return InteractionService:IsDoorClosed(openingId)
+			end)
+			muffle = Cfg.DoorMuffle ^ closed
+		end
+	end
+	local d = (source - root.Position).Magnitude
+	local heard = loudness * muffle * math.clamp(1 - d / Cfg.HearingRange, 0, 1)
+	if heard > noise then
+		noise = heard
+		lastKnown = source
+	end
+end
+
+function LodgerService:IsActive(): boolean
+	return brain.State ~= "Dormant"
+end
+
+function LodgerService:State(): string
+	return brain.State
+end
+
+function LodgerService:DistanceTo(p: Player): number
+	local r = PlayerService:GetRoot(p)
+	if not root or not r then
+		return math.huge
+	end
+	return (r.Position - root.Position).Magnitude
+end
+
+--[[
+	Wakes the Lodger to hunt `p`. It appears inside an echo of p's own route, in a worn cell,
+	somewhere p can see (first meeting) or out of sight (later). Returns false if nowhere fits.
+]]
+function LodgerService:Wake(p: Player, first: boolean): boolean
+	if brain.State ~= "Dormant" then
+		return false
+	end
+	local head = PlayerService:GetHead(p)
+	if not head then
+		return false
+	end
+	local wantVisible = first
+	local ago = EchoService:FindVisibleStretch(
+		p,
+		30,
+		EchoConfig.HistorySeconds - 20,
+		head.Position,
+		22,
+		60,
+		function(wp)
+			local c = cellOf(wp)
+			if not c or not canEnter(c) then
+				return false
+			end
+			return HorrorEventService.VisibleFrom(p, wp) == wantVisible
+		end,
+		nil
+	)
+	if not ago then
+		return false
+	end
+	local path = EchoService:Segment(p, ago, 14)
+	if not path or #path.Samples < 4 then
+		return false
+	end
+	local s1 = path.Samples[1]
+	if not spawnRig(p, LayoutSpace.ToWorld(s1.X, s1.Y, s1.Z)) then
+		return false
+	end
+	target = p
+	LodgerBrain.Wake(brain)
+	-- While mimicking it looks like an echo: grey and translucent. It turns solid when it deviates.
+	setLook(0.35, true)
+	local pts = {}
+	for i = 2, #path.Samples do
+		local s = path.Samples[i]
+		table.insert(pts, LayoutSpace.ToWorld(s.X, s.Y, s.Z))
+	end
+	setRoute(pts)
+	if humanoid then
+		humanoid.WalkSpeed = PlayerConfig.WalkSpeed -- walks exactly at the player's pace while it pretends
+	end
+	AnalyticsService:Log(p, "LodgerWake", { First = first, Ago = ago })
+	return true
+end
+
+local function enterState(s: string)
+	if rig then
+		rig:SetAttribute("State", s)
+	end
+	LodgerService.StateChanged:Fire(s, target)
+	if s == "Deviate" then
+		stopMoving()
+		setLook(0, false)
+	elseif s == "Pursue" then
+		if humanoid then
+			humanoid.WalkSpeed = Cfg.PursueSpeed
+		end
+		lastRepath = 0
+	elseif s == "Search" then
+		if humanoid then
+			humanoid.WalkSpeed = Cfg.WalkSpeed
+		end
+		stopMoving()
+	elseif s == "Withdraw" then
+		if humanoid then
+			humanoid.WalkSpeed = Cfg.WalkSpeed
+		end
+		withdrawUntil = os.clock() + 8
+		local home = CollectionService:GetTagged("LodgerHome")[1] :: BasePart?
+		local pts = if home then computePath(home.Position) else nil
+		setRoute(pts or {})
+		HorrorEventService:RestoreLights()
+	elseif s == "Take" then
+		stopMoving()
+		local victim = target
+		if victim then
+			local vh = victim.Character and victim.Character:FindFirstChildOfClass("Humanoid")
+			if vh then
+				vh.WalkSpeed = 0
+			end
+			Net.Fire(victim, "Taken", { LodgerPosition = root and root.Position })
+			AnalyticsService:Log(victim, "Taken", { Cell = CellService:GetCell(victim) })
+			LodgerService.Took:Fire(victim)
+			task.delay(4, function()
+				PlayerService:Respawn(victim)
+			end)
+		end
+		task.delay(1.5, function()
+			LodgerBrain.Finish(brain) -- Take -> Withdraw
+			enterState("Withdraw")
+		end)
+	elseif s == "Dormant" then
+		local t = target
+		despawn()
+		target = nil
+		LodgerService.Withdrew:Fire(t)
+	end
+end
+
+local function faceTarget()
+	if not root or not target then
+		return
+	end
+	local tr = PlayerService:GetRoot(target)
+	if tr then
+		local flat = Vector3.new(tr.Position.X, root.Position.Y, tr.Position.Z)
+		if (flat - root.Position).Magnitude > 0.1 then
+			root.CFrame = CFrame.lookAt(root.Position, flat)
+		end
+	end
+end
+
+local function visibleToAnyone(): boolean
+	if not root then
+		return false
+	end
+	for _, p in Players:GetPlayers() do
+		if HorrorEventService.VisibleFrom(p, root.Position) then
+			return true
+		end
+	end
+	return false
+end
+
+local function tick(dt: number)
+	if brain.State == "Dormant" then
+		return
+	end
+	if not rig or not root or not humanoid or not rig.Parent then
+		LodgerBrain.Finish(brain)
+		brain.State = "Dormant"
+		enterState("Dormant")
+		return
+	end
+	local t = target
+	local hasTarget = t ~= nil and t.Parent ~= nil and PlayerService:IsAlive(t)
+	local tRoot = if hasTarget and t then PlayerService:GetRoot(t) else nil
+	local visible = hasTarget and t ~= nil and canSee(t)
+	local dist = if tRoot then (tRoot.Position - root.Position).Magnitude else math.huge
+	local myCell = cellOf(root.Position)
+	local tCell = if tRoot then cellOf(tRoot.Position) else nil
+	if visible and tRoot then
+		lastKnown = tRoot.Position
+	end
+	-- Running and wading are loud.
+	if hasTarget and t and tRoot then
+		local speed = PlayerService:GetSpeed(t)
+		local loud = 0
+		if PlayerService:GetStance(t) == "Run" and speed > PlayerConfig.RunSpeedThreshold then
+			loud = 0.55
+		end
+		if tCell and CellService:HasTag(tCell, "Water") and speed > 1 then
+			loud = math.max(loud, 0.6)
+		end
+		if loud > 0 then
+			LodgerService:Hear(tRoot.Position, loud)
+		end
+	end
+
+	local routeDone = #route == 0 or routeIndex > #route
+	local changed = LodgerBrain.Step(brain, {
+		Dt = dt,
+		HasTarget = hasTarget,
+		TargetVisible = visible,
+		TargetDistance = dist,
+		TargetReachable = tCell ~= nil and canEnter(tCell) and reachable(myCell, tCell),
+		TargetLookingAtMe = hasTarget and t ~= nil and lookingAtMe(t),
+		HeardLoudness = noise,
+		RouteDone = routeDone and (brain.State :: string) ~= "Withdraw"
+			or (
+				(brain.State :: string) == "Withdraw"
+				and os.clock() > withdrawUntil
+				and not visibleToAnyone()
+			),
+	}, Cfg)
+	noise = 0
+	if changed then
+		enterState(changed)
+		if changed == "Dormant" then
+			return
+		end
+	end
+
+	local s = brain.State
+	if s == "Mimic" or s == "Withdraw" then
+		followRoute()
+	elseif s == "Deviate" then
+		faceTarget()
+	elseif s == "Pursue" and tRoot then
+		local now = os.clock()
+		if now - lastRepath >= Cfg.RepathSeconds or #route == 0 then
+			lastRepath = now
+			local pts = computePath(tRoot.Position)
+			if pts then
+				setRoute(pts)
+			end
+		end
+		followRoute()
+	elseif s == "Search" then
+		if lastKnown then
+			local c = cellOf(lastKnown)
+			if c and canEnter(c) and #route == 0 then
+				local pts = computePath(lastKnown)
+				if pts then
+					setRoute(pts)
+				end
+				lastKnown = nil
+			end
+		end
+		if followRoute() then
+			faceTarget() -- stands at the edge of clean dust, facing you
+		end
+	end
+	openDoorsNear()
+	if walkTrack then
+		local moving = root.AssemblyLinearVelocity.Magnitude > 1
+		if moving and not walkTrack.IsPlaying then
+			walkTrack:Play(0.2)
+		elseif not moving and walkTrack.IsPlaying then
+			walkTrack:Stop(0.3)
+		end
+	end
+end
+
+function LodgerService:Init(registry)
+	PlayerService = registry.PlayerService
+	CellService = registry.CellService
+	WearService = registry.WearService
+	EchoService = registry.EchoService
+	InteractionService = registry.InteractionService
+	HorrorEventService = registry.HorrorEventService
+	AnalyticsService = registry.AnalyticsService
+	InteractionService.Noise:Connect(function(_p, pos: Vector3, loudness: number)
+		LodgerService:Hear(pos, loudness)
+	end)
+	Players.PlayerRemoving:Connect(function(p)
+		if p == target then
+			target = nil
+		end
+	end)
+end
+
+function LodgerService:Start()
+	-- A loop rather than Heartbeat: path computation yields, and ticks must not overlap.
+	while true do
+		local dt = task.wait(TICK)
+		local ok, err = pcall(tick :: any, dt)
+		if not ok then
+			warn("[Lodger] tick failed: " .. tostring(err))
+		end
+	end
+end
+
+return LodgerService
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="51">
+          <Properties>
+            <string name="Name">ObjectiveService</string>
+            <string name="Source"><![CDATA[--!strict
+--[[
+	Slice objective (VERTICAL_SLICE_SPEC §2): two fuses -> fuse box -> lift -> payoff.
+	Items and progress are shared by the whole server (co-op), and owned here.
+]]
+local Players = game:GetService("Players")
+
+local Shared = game:GetService("ReplicatedStorage"):WaitForChild("Shared")
+local EchoCodec = require(Shared.Logic.EchoCodec)
+local Net = require(Shared.Net)
+local Signal = require(Shared.Util.Signal)
+local Story = require(Shared.Config.Story)
+
+local ObjectiveService = {}
+ObjectiveService.FlagSet = Signal.new() :: Signal.Signal<string, Player?>
+
+local flags: { [string]: boolean } = {}
+local fusesHeld = 0
+local fusesNeeded = 2
+local InteractionService: any
+local CellService: any
+local HorrorEventService: any
+
+function ObjectiveService:GetFlags(): { [string]: boolean }
+	return flags
+end
+
+function ObjectiveService:SetFlag(name: string, player: Player?)
+	if flags[name] then
+		return
+	end
+	flags[name] = true
+	ObjectiveService.FlagSet:Fire(name, player)
+end
+
+-- 0..1 progress through the slice, used by the Director's MinProgress gates.
+function ObjectiveService:Progress(): number
+	local p = 0
+	if flags.ReadClipboard then
+		p += 0.1
+	end
+	if flags.HasTape01 then
+		p += 0.2
+	end
+	p += 0.25 * math.min(fusesHeld + (if flags.Powered then fusesNeeded else 0), fusesNeeded)
+	if flags.Powered then
+		p = 1
+	end
+	return math.min(p, 1)
+end
+
+local function objectiveText(): string
+	if flags.Powered then
+		return Story.Objectives.TakeLift
+	elseif fusesHeld >= fusesNeeded then
+		return Story.Objectives.PowerLift
+	end
+	return Story.Objectives.FindFuses
+end
+
+local function broadcast(target: Player?)
+	local payload = {
+		Text = objectiveText(),
+		Fuses = fusesHeld,
+		Needs = fusesNeeded,
+		Visible = flags.ReadClipboard == true,
+	}
+	if target then
+		Net.Fire(target, "Objective", payload)
+	else
+		Net.FireAll("Objective", payload)
+	end
+end
+
+local function onUsed(player: Player, part: BasePart)
+	local kind = part:GetAttribute("InteractKind")
+	if kind == "Note" then
+		local id = part:GetAttribute("NoteId") :: string
+		Net.Fire(player, "Subtitle", { Kind = "Note", Text = Story.Notes[id] or "" })
+		if id == "Clipboard" then
+			ObjectiveService:SetFlag("ReadClipboard", player)
+			broadcast(nil)
+		end
+	elseif kind == "Tape" then
+		local id = part:GetAttribute("TapeId") :: string
+		local lines = Story.Tapes[id]
+		if lines then
+			-- Everyone near hears a tape; send to all, clients filter by distance via the emitter.
+			Net.FireAll(
+				"Subtitle",
+				{ Kind = "Tape", Speaker = "Theo (tape)", Lines = lines, Position = part.Position }
+			)
+			ObjectiveService:SetFlag("Has" .. id, player)
+		end
+	elseif kind == "Item" and part:GetAttribute("ItemId") == "Fuse" then
+		local pointId = part:GetAttribute("PointId") :: string
+		part:Destroy()
+		fusesHeld += 1
+		InteractionService.Action:Fire(player, EchoCodec.ActionKind.Pickup, pointId)
+		ObjectiveService:SetFlag(pointId, player)
+		broadcast(nil)
+	elseif kind == "FuseBox" then
+		if flags.Powered then
+			return
+		end
+		if fusesHeld >= fusesNeeded then
+			fusesHeld = 0
+			ObjectiveService:SetFlag("Powered", player)
+			local lift = InteractionService:FindDoor("LiftDoor")
+			if lift then
+				InteractionService:SetLocked(lift, false)
+				InteractionService:SetDoorOpen(lift, true)
+			end
+			Net.FireAll("EventPlay", { Category = "Sfx", Sound = "LiftPower", Position = part.Position })
+			broadcast(nil)
+		else
+			Net.Fire(
+				player,
+				"Subtitle",
+				{ Kind = "Hint", Text = string.format("Needs %d fuses.", fusesNeeded) }
+			)
+		end
+	end
+end
+
+function ObjectiveService:Init(registry)
+	InteractionService = registry.InteractionService
+	CellService = registry.CellService
+	HorrorEventService = registry.HorrorEventService
+	InteractionService.Used:Connect(onUsed)
+	Players.PlayerAdded:Connect(function(p)
+		task.defer(broadcast, p)
+	end)
+	CellService.CellChanged:Connect(function(player: Player, old: string?, new: string?)
+		-- Beat 13: stepping back out of 4D with the second fuse wakes the Lodger, once.
+		if old == "R4D" and new == "CorrE" and flags.Fuse2 and not flags.MetLodger then
+			ObjectiveService:SetFlag("MetLodger", player)
+			HorrorEventService:PlayScripted("LodgerFirst", player)
+		end
+		-- Beat 18: entering the powered lift ends the slice.
+		if new == "Lift" and flags.Powered and not flags.SliceEnded then
+			ObjectiveService:SetFlag("SliceEnded", player)
+			HorrorEventService:PlayScripted("LiftKnock", player)
+			task.delay(9, function()
+				Net.FireAll("SliceEnd", {})
+			end)
+		end
+	end)
+end
+
+function ObjectiveService:Start()
+	broadcast(nil)
+end
+
+return ObjectiveService
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="52">
+          <Properties>
+            <string name="Name">PlayerService</string>
+            <string name="Source"><![CDATA[--!strict
+-- Character setup, stance (server-authoritative speeds), flashlight, look direction, respawn.
+local CollectionService = game:GetService("CollectionService")
+local Players = game:GetService("Players")
+
+local Shared = game:GetService("ReplicatedStorage"):WaitForChild("Shared")
+local Net = require(Shared.Net)
+local PlayerConfig = require(Shared.Config.PlayerConfig)
+local Signal = require(Shared.Util.Signal)
+
+export type Stance = "Walk" | "Run" | "Crouch"
+
+local PlayerService = {}
+PlayerService.Respawned = Signal.new() :: Signal.Signal<Player>
+PlayerService.FlashlightChanged = Signal.new() :: Signal.Signal<Player, boolean>
+
+local stance: { [Player]: Stance } = {}
+local look: { [Player]: Vector3 } = {}
+local flashlight: { [Player]: boolean } = {}
+local checkpoint: CFrame? = nil
+
+local SCALE_VALUES = { "BodyHeightScale", "BodyWidthScale", "BodyDepthScale", "HeadScale" }
+
+local function speedFor(s: Stance): number
+	if s == "Run" then
+		return PlayerConfig.RunSpeed
+	elseif s == "Crouch" then
+		return PlayerConfig.CrouchSpeed
+	end
+	return PlayerConfig.WalkSpeed
+end
+
+local function setupCharacter(player: Player, character: Model)
+	character.Archivable = true -- echo figures and the Lodger are cloned from the character
+	local humanoid = character:WaitForChild("Humanoid") :: Humanoid
+	humanoid.WalkSpeed = speedFor(stance[player] or "Walk")
+	humanoid.UseJumpPower = true
+	humanoid.JumpPower = 0
+	-- Clamp avatar proportions so extreme avatars don't break the tone (plan §S).
+	for _, name in SCALE_VALUES do
+		local v = humanoid:FindFirstChild(name)
+		if v and v:IsA("NumberValue") then
+			v.Value = math.clamp(v.Value, PlayerConfig.BodyScaleClamp.Min, PlayerConfig.BodyScaleClamp.Max)
+		end
+	end
+	-- Flashlight lives on the server so every player sees everyone's beam.
+	local head = character:WaitForChild("Head") :: BasePart
+	local att = Instance.new("Attachment")
+	att.Name = "FlashlightAttachment"
+	att.Position = Vector3.new(0.4, -0.3, -0.6)
+	att.Parent = head
+	local spot = Instance.new("SpotLight")
+	spot.Name = "Flashlight"
+	spot.Angle = 42
+	spot.Range = 48
+	spot.Brightness = 2.2
+	spot.Color = Color3.fromRGB(255, 244, 225)
+	spot.Shadows = false -- clients raise this locally on the High tier
+	spot.Enabled = flashlight[player] == true
+	spot.Face = Enum.NormalId.Front
+	spot.Parent = att
+	character:SetAttribute("Flashlight", spot.Enabled)
+	character:SetAttribute("Stance", stance[player] or "Walk")
+	if checkpoint then
+		character:PivotTo(checkpoint)
+	end
+end
+
+function PlayerService:GetStance(player: Player): Stance
+	return stance[player] or "Walk"
+end
+
+function PlayerService:GetRoot(player: Player): BasePart?
+	local c = player.Character
+	return c and c:FindFirstChild("HumanoidRootPart") :: BasePart?
+end
+
+function PlayerService:GetHead(player: Player): BasePart?
+	local c = player.Character
+	return c and c:FindFirstChild("Head") :: BasePart?
+end
+
+function PlayerService:GetLook(player: Player): Vector3?
+	return look[player]
+end
+
+function PlayerService:IsFlashlightOn(player: Player): boolean
+	return flashlight[player] == true
+end
+
+function PlayerService:IsAlive(player: Player): boolean
+	local c = player.Character
+	local h = c and c:FindFirstChildOfClass("Humanoid")
+	return h ~= nil and h.Health > 0
+end
+
+-- Horizontal speed from physics, used to classify movement on the server.
+function PlayerService:GetSpeed(player: Player): number
+	local root = self:GetRoot(player)
+	if not root then
+		return 0
+	end
+	local v = root.AssemblyLinearVelocity
+	return Vector3.new(v.X, 0, v.Z).Magnitude
+end
+
+function PlayerService:Respawn(player: Player)
+	player:LoadCharacter()
+	PlayerService.Respawned:Fire(player)
+end
+
+function PlayerService:SetCheckpoint(cf: CFrame)
+	checkpoint = cf
+end
+
+function PlayerService:Init()
+	Players.CharacterAutoLoads = true
+	local spawn = CollectionService:GetTagged("Checkpoint")[1]
+	if spawn and spawn:IsA("BasePart") then
+		checkpoint = spawn.CFrame + Vector3.new(0, 3, 0)
+	end
+	Net.OnServer("Stance", function(player, s: Stance)
+		stance[player] = s
+		local c = player.Character
+		local h = c and c:FindFirstChildOfClass("Humanoid")
+		if h then
+			h.WalkSpeed = speedFor(s)
+		end
+		if c then
+			c:SetAttribute("Stance", s)
+		end
+	end)
+	Net.OnServer("Flashlight", function(player, on: boolean)
+		flashlight[player] = on
+		local c = player.Character
+		local spot = c and c:FindFirstChild("Flashlight", true)
+		if spot and spot:IsA("SpotLight") then
+			spot.Enabled = on
+		end
+		if c then
+			c:SetAttribute("Flashlight", on)
+		end
+		PlayerService.FlashlightChanged:Fire(player, on)
+	end)
+	Net.OnServer("Look", function(player, dir: Vector3)
+		look[player] = dir.Unit
+	end)
+end
+
+function PlayerService:Start()
+	local function onPlayer(player: Player)
+		player.CharacterAdded:Connect(function(c)
+			setupCharacter(player, c)
+		end)
+		if player.Character then
+			setupCharacter(player, player.Character)
+		end
+	end
+	Players.PlayerAdded:Connect(onPlayer)
+	for _, p in Players:GetPlayers() do
+		onPlayer(p)
+	end
+	Players.PlayerRemoving:Connect(function(p)
+		stance[p] = nil
+		look[p] = nil
+		flashlight[p] = nil
+	end)
+end
+
+return PlayerService
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="53">
+          <Properties>
+            <string name="Name">WearService</string>
+            <string name="Source"><![CDATA[--!strict
+-- The building's memory of footsteps (plan §D.1). Server-authoritative; clients get byte snapshots.
+local Players = game:GetService("Players")
+
+local Shared = game:GetService("ReplicatedStorage"):WaitForChild("Shared")
+local Net = require(Shared.Net)
+local Signal = require(Shared.Util.Signal)
+local WearConfig = require(Shared.Config.WearConfig)
+local WearMath = require(Shared.Logic.WearMath)
+
+local WearService = {}
+-- Fires when a cell crosses the Lodger threshold (cellId, nowEnterable).
+WearService.ThresholdCrossed = Signal.new() :: Signal.Signal<string, boolean>
+
+local wear: { [string]: number } = {}
+local sentBytes: { [string]: number } = {}
+local CellService: any
+local PlayerService: any
+
+function WearService:Get(cellId: string): number
+	return wear[cellId] or 0
+end
+
+function WearService:CanLodgerEnter(cellId: string): boolean
+	return (wear[cellId] or 0) >= WearConfig.LodgerThreshold
+end
+
+function WearService:Add(cellId: string, amount: number)
+	local before = wear[cellId] or 0
+	local after = WearMath.Add(before, amount)
+	wear[cellId] = after
+	local t = WearConfig.LodgerThreshold
+	if (before < t) ~= (after < t) then
+		WearService.ThresholdCrossed:Fire(cellId, after >= t)
+	end
+end
+
+function WearService:All(): { [string]: number }
+	return table.clone(wear)
+end
+
+local function movementMode(player: Player): string
+	local speed = PlayerService:GetSpeed(player)
+	if speed < 0.5 then
+		return "Still"
+	end
+	local stance = PlayerService:GetStance(player)
+	if stance == "Crouch" then
+		return "Crouch"
+	end
+	if speed >= require(Shared.Config.PlayerConfig).RunSpeedThreshold then
+		return "Run"
+	end
+	return "Walk"
+end
+
+local function snapshot(force: boolean)
+	local changed = force
+	local out: { [string]: number } = {}
+	for id, w in wear do
+		local b = WearMath.ToByte(w)
+		out[id] = b
+		if math.abs(b - (sentBytes[id] or 0)) >= WearConfig.ReplicateMinStep then
+			changed = true
+		end
+	end
+	if changed then
+		sentBytes = out
+		Net.FireAll("WearSnapshot", out)
+	end
+end
+
+function WearService:Init(registry)
+	CellService = registry.CellService
+	PlayerService = registry.PlayerService
+	for _, id in CellService.Graph.Order do
+		wear[id] = 0
+	end
+	CellService.CellChanged:Connect(function(_player, _old, new)
+		if new then
+			WearService:Add(new, WearConfig.EnterBonus)
+		end
+	end)
+	Players.PlayerAdded:Connect(function(p)
+		task.defer(function()
+			Net.Fire(p, "WearSnapshot", sentBytes)
+		end)
+	end)
+end
+
+function WearService:Start()
+	local tick = WearConfig.TickSeconds
+	local sinceSend = 0
+	while true do
+		local dt = task.wait(tick)
+		for id, w in wear do
+			local d = WearMath.Decay(w, dt, WearConfig.HalfLifeSeconds)
+			if d ~= w then
+				local t = WearConfig.LodgerThreshold
+				wear[id] = d
+				if w >= t and d < t then
+					WearService.ThresholdCrossed:Fire(id, false)
+				end
+			end
+		end
+		for _, p in Players:GetPlayers() do
+			local cell = CellService:GetCell(p)
+			if cell then
+				WearService:Add(cell, WearConfig.GainPerSecond[movementMode(p)] * dt)
+			end
+		end
+		sinceSend += dt
+		if sinceSend >= WearConfig.ReplicateSeconds then
+			sinceSend = 0
+			snapshot(false)
+		end
+	end
+end
+
+return WearService
+]]></string>
+          </Properties>
+        </Item>
+      </Item>
+    </Item>
+  </Item>
+  <Item class="StarterPlayer" referent="54">
+    <Properties>
+      <string name="Name">StarterPlayer</string>
+      <token name="CameraMode">1</token>
+      <float name="CharacterJumpPower">0</float>
+      <bool name="CharacterUseJumpPower">true</bool>
+      <float name="CharacterWalkSpeed">10</float>
+    </Properties>
+    <Item class="StarterPlayerScripts" referent="55">
+      <Properties>
+        <string name="Name">StarterPlayerScripts</string>
+      </Properties>
+      <Item class="Folder" referent="56">
+        <Properties>
+          <string name="Name">Client</string>
+        </Properties>
+        <Item class="LocalScript" referent="57">
+          <Properties>
+            <string name="Name">Bootstrap</string>
+            <string name="Source"><![CDATA[--!strict
+-- Client entry point. Order: settings and audio first (others depend on them), UI before interaction.
+local Shared = game:GetService("ReplicatedStorage"):WaitForChild("Shared")
+local Loader = require(Shared.Util.Loader)
+
+Loader.Run(script.Parent.Controllers, {
+	"SettingsController",
+	"AudioController",
+	"UIController",
+	"MovementController",
+	"CameraController",
+	"FlashlightController",
+	"DoorController",
+	"InteractionController",
+	"FootprintController",
+	"EchoController",
+	"LodgerPresentationController",
+})
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="Folder" referent="58">
+          <Properties>
+            <string name="Name">Controllers</string>
+          </Properties>
+          <Item class="ModuleScript" referent="59">
+            <Properties>
+              <string name="Name">AudioController</string>
+              <string name="Source"><![CDATA[--!strict
+--[[
+	Object-based audio (plan §M): AudioPlayer -> [AudioFilter] -> AudioEmitter for 3D sounds,
+	heard by one AudioListener on the camera; 2D beds go straight to a bus fader.
+	Acoustic Simulation handles occlusion where the tier allows; otherwise a raycast drives a low-pass.
+]]
+local RunService = game:GetService("RunService")
+local SoundService = game:GetService("SoundService")
+local TweenService = game:GetService("TweenService")
+local Workspace = game:GetService("Workspace")
+
+local Shared = game:GetService("ReplicatedStorage"):WaitForChild("Shared")
+local AssetIds = require(Shared.Config.AssetIds)
+local AudioConfig = require(Shared.Config.AudioConfig)
+
+export type Bus = "Ambience" | "World" | "Player" | "Echo" | "Lodger" | "UI"
+export type PlayOptions = {
+	Bus: Bus?,
+	Volume: number?,
+	Speed: number?,
+	Curve: string?,
+	Looping: boolean?,
+}
+type Handle = {
+	Player: AudioPlayer,
+	Emitter: AudioEmitter?,
+	Filter: AudioFilter?,
+	Anchor: Instance?,
+	Position: Vector3?,
+}
+
+local AudioController = {}
+
+local Settings: any
+local root: Folder
+local master: AudioFader
+local busFaders: { [string]: AudioFader } = {}
+local listener: AudioListener
+local active: { Handle } = {}
+local warned: { [string]: boolean } = {}
+
+local function wire(from: Instance, to: Instance, parent: Instance): Wire
+	local w = Instance.new("Wire")
+	w.SourceInstance = from
+	w.TargetInstance = to
+	w.Parent = parent
+	return w
+end
+
+local function busVolume(bus: Bus): number
+	return (AudioConfig.Buses :: any)[bus] or 1
+end
+
+local function resolve(key: string): string?
+	local id = (AssetIds.Sounds :: any)[key]
+	if id == nil or id == "" then
+		if not warned[key] then
+			warned[key] = true
+			warn("[Audio] no asset for sound '" .. key .. "' yet (AssetIds.Sounds)")
+		end
+		return nil
+	end
+	return id
+end
+
+local function cleanup(h: Handle)
+	local i = table.find(active, h)
+	if i then
+		table.remove(active, i)
+	end
+	if h.Anchor then
+		h.Anchor:Destroy()
+	end
+	h.Player:Destroy()
+	if h.Filter then
+		h.Filter:Destroy()
+	end
+end
+
+local function startWhenReady(p: AudioPlayer)
+	if p.IsReady then
+		p:Play()
+		return
+	end
+	task.spawn(function()
+		local t0 = os.clock()
+		while not p.IsReady and p.Parent and os.clock() - t0 < 5 do
+			task.wait(0.05)
+		end
+		if p.Parent then
+			p:Play()
+		end
+	end)
+end
+
+--[[
+	Plays a sound by AssetIds key. `at` = world position (3D), an Instance to follow (3D), or nil (2D).
+	Returns the AudioPlayer so callers can stop it, or nil when the asset isn't sourced yet.
+]]
+function AudioController:Play(key: string, at: (Vector3 | Instance)?, opts: PlayOptions?): AudioPlayer?
+	local id = resolve(key)
+	if not id then
+		return nil
+	end
+	local o: PlayOptions = opts or {}
+	local bus: Bus = o.Bus or "World"
+	local p = Instance.new("AudioPlayer")
+	p.Asset = id
+	p.Volume = (o.Volume or 1) * busVolume(bus)
+	p.PlaybackSpeed = o.Speed or 1
+	p.Looping = o.Looping == true
+	local h: Handle = { Player = p }
+	if at == nil then
+		p.Parent = root
+		wire(p, busFaders[bus], p)
+	else
+		local anchor: Instance
+		if typeof(at) == "Vector3" then
+			local a = Instance.new("Attachment")
+			a.WorldPosition = at
+			a.Parent = Workspace.Terrain
+			anchor = a
+			h.Anchor = a
+			h.Position = at
+		else
+			anchor = at
+		end
+		local e = Instance.new("AudioEmitter")
+		local curve = (AudioConfig.Curves :: any)[o.Curve or "Default"] or AudioConfig.Curves.Default
+		e:SetDistanceAttenuation(curve)
+		e.AcousticSimulationEnabled = Settings.Tier.AcousticSimulation
+		e.Parent = anchor
+		h.Emitter = e
+		p.Parent = e
+		if not Settings.Tier.AcousticSimulation then
+			-- Raycast fallback (§M): a low-pass between player and emitter, driven in the update loop.
+			local f = Instance.new("AudioFilter")
+			f.FilterType = Enum.AudioFilterType.Lowpass12dB
+			f.Frequency = AudioConfig.OcclusionFallback.OpenFrequency
+			f.Parent = e
+			wire(p, f, f)
+			wire(f, e, f)
+			h.Filter = f
+		else
+			wire(p, e, p)
+		end
+		if h.Anchor == nil then
+			-- Following an instance: the emitter dies with it, the player with the emitter.
+			e.Destroying:Connect(function()
+				cleanup(h)
+			end)
+		end
+	end
+	table.insert(active, h)
+	p.Ended:Connect(function()
+		if not p.Looping then
+			cleanup(h)
+		end
+	end)
+	startWhenReady(p)
+	return p
+end
+
+function AudioController:Stop(p: AudioPlayer?)
+	if not p then
+		return
+	end
+	for _, h in active do
+		if h.Player == p then
+			cleanup(h)
+			return
+		end
+	end
+	p:Destroy()
+end
+
+-- Silence window (§M): pull the ambience bus down, then restore.
+function AudioController:Silence(seconds: number)
+	local f = busFaders.Ambience
+	TweenService:Create(f, TweenInfo.new(2.5), { Volume = 0.03 }):Play()
+	task.delay(seconds, function()
+		TweenService:Create(f, TweenInfo.new(4), { Volume = 1 }):Play()
+	end)
+end
+
+function AudioController:SetMasterVolume(v: number)
+	master.Volume = v
+end
+
+local rayParams = RaycastParams.new()
+rayParams.FilterType = Enum.RaycastFilterType.Exclude
+
+local function updateOcclusion()
+	local cam = Workspace.CurrentCamera
+	if not cam or Settings.Tier.AcousticSimulation then
+		return
+	end
+	local exclude: { Instance } = {}
+	local dyn = Workspace:FindFirstChild("Dynamic")
+	if dyn then
+		table.insert(exclude, dyn)
+	end
+	for _, plr in game:GetService("Players"):GetPlayers() do
+		if plr.Character then
+			table.insert(exclude, plr.Character)
+		end
+	end
+	rayParams.FilterDescendantsInstances = exclude
+	local fb = AudioConfig.OcclusionFallback
+	for _, h in active do
+		if h.Filter and h.Emitter then
+			local parent = h.Emitter.Parent
+			local pos: Vector3? = h.Position
+			if not pos and parent then
+				if parent:IsA("Attachment") then
+					pos = parent.WorldPosition
+				elseif parent:IsA("BasePart") then
+					pos = parent.Position
+				end
+			end
+			if pos then
+				local hit = Workspace:Raycast(cam.CFrame.Position, pos - cam.CFrame.Position, rayParams)
+				local blocked = hit ~= nil and (hit.Position - pos).Magnitude > 1
+				h.Filter.Frequency = if blocked then fb.BlockedFrequency else fb.OpenFrequency
+			end
+		end
+	end
+end
+
+function AudioController:Init(registry)
+	Settings = registry.SettingsController
+	local f = Instance.new("Folder")
+	f.Name = "AudioGraph"
+	f.Parent = SoundService
+	root = f
+
+	local out = Instance.new("AudioDeviceOutput")
+	out.Parent = root
+	local comp = Instance.new("AudioCompressor")
+	comp.Threshold = -12
+	comp.Ratio = 3
+	comp.Parent = root
+	master = Instance.new("AudioFader")
+	master.Name = "Master"
+	master.Parent = root
+	wire(master, comp, root)
+	wire(comp, out, root)
+	for name: string in AudioConfig.Buses :: any do
+		local fader = Instance.new("AudioFader")
+		fader.Name = name
+		fader.Parent = root
+		wire(fader, master, root)
+		busFaders[name] = fader
+	end
+	listener = Instance.new("AudioListener")
+	listener.Name = "Listener"
+	-- 3D sounds are mixed by the listener and land on the World bus.
+	wire(listener, busFaders.World, root)
+	pcall(function()
+		(SoundService :: any).AcousticSimulationEnabled = true
+	end)
+end
+
+function AudioController:Start()
+	local function attachListener()
+		local cam = Workspace.CurrentCamera
+		if cam then
+			listener.AcousticSimulationEnabled = Settings.Tier.AcousticSimulation
+			listener.Parent = cam
+		end
+	end
+	attachListener()
+	Workspace:GetPropertyChangedSignal("CurrentCamera"):Connect(attachListener)
+	Settings.Changed:Connect(attachListener)
+	-- Ambience beds (only those with sourced assets play).
+	self:Play("RoomTone", nil, { Bus = "Ambience", Looping = true, Volume = 0.5 })
+	self:Play("Rain", nil, { Bus = "Ambience", Looping = true, Volume = 0.35 })
+	local acc = 0
+	RunService.Heartbeat:Connect(function(dt)
+		acc += dt
+		if acc >= AudioConfig.OcclusionFallback.CheckSeconds then
+			acc = 0
+			updateOcclusion()
+		end
+	end)
+end
+
+return AudioController
+]]></string>
+            </Properties>
+          </Item>
+          <Item class="ModuleScript" referent="60">
+            <Properties>
+              <string name="Name">CameraController</string>
+              <string name="Source"><![CDATA[--!strict
+-- Locked first person with subtle head-bob and crouch height. Exposes hooks for scripted camera moments.
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local Workspace = game:GetService("Workspace")
+
+local Shared = game:GetService("ReplicatedStorage"):WaitForChild("Shared")
+local PlayerConfig = require(Shared.Config.PlayerConfig)
+
+local CameraController = {}
+CameraController.Scripted = false -- when true, another system owns the camera (e.g. Taken sequence)
+
+local player = Players.LocalPlayer
+local Settings: any
+local Movement: any
+local bobPhase = 0
+local crouchBlend = 0
+
+function CameraController:Init(registry)
+	Settings = registry.SettingsController
+	Movement = registry.MovementController
+	player.CameraMode = Enum.CameraMode.LockFirstPerson
+	player.CameraMaxZoomDistance = 0.5
+end
+
+function CameraController:Start()
+	local cam = Workspace.CurrentCamera
+	cam.FieldOfView = PlayerConfig.FieldOfView
+	RunService:BindToRenderStep("AfterYouCamera", Enum.RenderPriority.Camera.Value + 1, function(dt: number)
+		if self.Scripted then
+			return
+		end
+		local character = player.Character
+		local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+		if not humanoid then
+			return
+		end
+		local crouching = Movement:GetStance() == "Crouch"
+		crouchBlend += ((if crouching then 1 else 0) - crouchBlend) * math.min(1, dt * 10)
+		local offset = Vector3.new(0, -PlayerConfig.CrouchCameraDrop * crouchBlend, 0)
+		local speed = humanoid.MoveDirection.Magnitude * humanoid.WalkSpeed
+		if Settings.HeadBob and speed > 0.5 and humanoid.FloorMaterial ~= Enum.Material.Air then
+			bobPhase += dt * PlayerConfig.HeadBob.Frequency * (speed / PlayerConfig.WalkSpeed)
+			local a = PlayerConfig.HeadBob.Amplitude * math.min(speed / PlayerConfig.WalkSpeed, 1.6)
+			offset += Vector3.new(math.cos(bobPhase * 0.5) * a * 0.6, math.abs(math.sin(bobPhase)) * a, 0)
+		else
+			bobPhase = 0
+		end
+		humanoid.CameraOffset = offset
+	end)
+end
+
+return CameraController
+]]></string>
+            </Properties>
+          </Item>
+          <Item class="ModuleScript" referent="61">
+            <Properties>
+              <string name="Name">DoorController</string>
+              <string name="Source"><![CDATA[--!strict
+--[[
+	Animates door panels locally from the server's Open attribute (server owns collision,
+	clients own the motion). EchoObject events use PlayLocal to swing a door for one player only.
+]]
+local CollectionService = game:GetService("CollectionService")
+local TweenService = game:GetService("TweenService")
+
+local DoorController = {}
+
+local SWING = TweenInfo.new(0.7, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+local SLIDE = TweenInfo.new(1.6, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut)
+
+local function openCFrame(model: Model, panel: BasePart): CFrame
+	local closed = panel:GetAttribute("ClosedCFrame") :: CFrame
+	if model:GetAttribute("Kind") == "Lift" then
+		return closed * CFrame.new(-panel.Size.X * 0.95, 0, 0)
+	end
+	-- Hinge on the panel's left edge, swing ~95 degrees.
+	local hinge = closed * CFrame.new(-panel.Size.X / 2, 0, 0)
+	return hinge * CFrame.Angles(0, math.rad(95), 0) * CFrame.new(panel.Size.X / 2, 0, 0)
+end
+
+local function animate(model: Model, open: boolean, info: TweenInfo?)
+	local panel = model.PrimaryPart
+	if not panel then
+		return
+	end
+	local closed = panel:GetAttribute("ClosedCFrame") :: CFrame?
+	if not closed or model:GetAttribute("Kind") == "Plastic" or model:GetAttribute("Kind") == "Fake" then
+		return
+	end
+	local goal = if open then openCFrame(model, panel) else closed
+	local i = info or (if model:GetAttribute("Kind") == "Lift" then SLIDE else SWING)
+	TweenService:Create(panel, i, { CFrame = goal }):Play()
+end
+
+-- One player's private replay of a door (plan §N: per-player hallucinations).
+function DoorController:PlayLocal(model: Model, sequence: { boolean }, gap: number)
+	task.spawn(function()
+		local serverOpen = model:GetAttribute("Open") == true
+		for _, open in sequence do
+			animate(model, open)
+			task.wait(gap)
+		end
+		animate(model, serverOpen) -- end matching reality
+	end)
+end
+
+local function track(model: Instance)
+	if not model:IsA("Model") then
+		return
+	end
+	model:GetAttributeChangedSignal("Open"):Connect(function()
+		animate(model, model:GetAttribute("Open") == true)
+	end)
+	if model:GetAttribute("Open") == true then
+		animate(model, true, TweenInfo.new(0))
+	end
+end
+
+function DoorController:FindDoor(openingId: string): Model?
+	for _, m in CollectionService:GetTagged("Door") do
+		if m:GetAttribute("OpeningId") == openingId then
+			return m :: Model
+		end
+	end
+	return nil
+end
+
+function DoorController:Start()
+	CollectionService:GetInstanceAddedSignal("Door"):Connect(track)
+	for _, m in CollectionService:GetTagged("Door") do
+		track(m)
+	end
+end
+
+return DoorController
+]]></string>
+            </Properties>
+          </Item>
+          <Item class="ModuleScript" referent="62">
+            <Properties>
+              <string name="Name">EchoController</string>
+              <string name="Source"><![CDATA[--!strict
+--[[
+	Plays everything the server sends through EventPlay (plan §J): echoes of the player's own past,
+	fake scares, silence windows and one-shot sounds. Presenters are keyed by event Category, so a new
+	event of an existing category needs no client change.
+]]
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local Workspace = game:GetService("Workspace")
+
+local Shared = game:GetService("ReplicatedStorage"):WaitForChild("Shared")
+local EchoCodec = require(Shared.Logic.EchoCodec)
+local EchoConfig = require(Shared.Config.EchoConfig)
+local AssetIds = require(Shared.Config.AssetIds)
+local LayoutSpace = require(Shared.Util.LayoutSpace)
+local Net = require(Shared.Net)
+
+local EchoController = {}
+
+type Payload = { [string]: any }
+local Audio: any
+local Doors: any
+local UI: any
+local player = Players.LocalPlayer
+
+-- Local position history for "behind you" footsteps.
+local trail: { { t: number, p: Vector3 } } = {}
+
+local function worldPath(path: EchoCodec.Path): { CFrame }
+	local out = table.create(#path.Samples)
+	for i, s in path.Samples do
+		local pos = LayoutSpace.ToWorld(s.X, s.Y, s.Z)
+		out[i] = CFrame.new(pos) * CFrame.Angles(0, s.Yaw, 0)
+	end
+	return out
+end
+
+-- Calls fn(cframe, sampleIndex) every frame while interpolating along the path; yields until done.
+local function walkPath(cfs: { CFrame }, interval: number, fn: (CFrame, number) -> ())
+	local total = (#cfs - 1) * interval
+	local t = 0
+	while t < total do
+		local f = t / interval
+		local i = math.floor(f) + 1
+		local a = f - (i - 1)
+		local cf = cfs[i]:Lerp(cfs[math.min(i + 1, #cfs)], a)
+		fn(cf, i)
+		t += RunService.Heartbeat:Wait()
+	end
+end
+
+-- Reports whether the player turned toward the event within `window` seconds (tuning data, A1).
+local function watchNoticed(token: number?, position: Vector3?, window: number)
+	if not token or not position then
+		return
+	end
+	task.spawn(function()
+		local t0 = os.clock()
+		local noticed = false
+		while os.clock() - t0 < window do
+			local cam = Workspace.CurrentCamera
+			if cam then
+				local to = (position - cam.CFrame.Position).Unit
+				if cam.CFrame.LookVector:Dot(to) > 0.82 then
+					noticed = true
+					break
+				end
+			end
+			task.wait(0.1)
+		end
+		Net.FireServer("EventFeedback", token, noticed)
+	end)
+end
+
+local function makeFigure(userId: number): Model?
+	local owner = Players:GetPlayerByUserId(userId)
+	local character = owner and owner.Character
+	if not character then
+		return nil
+	end
+	character.Archivable = true
+	local clone = character:Clone()
+	if not clone then
+		return nil
+	end
+	for _, d in clone:GetDescendants() do
+		if d:IsA("BaseScript") or d:IsA("Light") or d:IsA("Sound") then
+			d:Destroy()
+		elseif d:IsA("BasePart") then
+			d.Anchored = d.Name == "HumanoidRootPart"
+			d.CanCollide = false
+			d.CanQuery = false
+			d.CanTouch = false
+			d.CastShadow = false
+			if d.Name ~= "HumanoidRootPart" then
+				local c = d.Color
+				local l = (c.R + c.G + c.B) / 3
+				d.Color = Color3.new(l, l, l * 1.04)
+				d.Transparency = EchoConfig.FigureTransparency
+				d.Material = Enum.Material.SmoothPlastic
+			end
+		elseif d:IsA("Decal") then
+			d.Transparency = 0.5
+		end
+	end
+	local h = clone:FindFirstChildOfClass("Humanoid")
+	if h then
+		h.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
+		h.HealthDisplayType = Enum.HumanoidHealthDisplayType.AlwaysOff
+	end
+	clone.Name = "Echo"
+	return clone
+end
+
+local Presenters: { [string]: (Payload) -> () } = {}
+
+Presenters.Sfx = function(p)
+	Audio:Play(p.Sound, p.Position, { Bus = "World" })
+end
+
+Presenters.EchoSound = function(p)
+	-- Your own footsteps, `Lag` seconds behind you: stop, and they stop a beat later.
+	local t0 = os.clock()
+	local last: Vector3? = nil
+	local firstStep: Vector3? = nil
+	while os.clock() - t0 < p.Duration do
+		local target = os.clock() - p.Lag
+		local lagged: Vector3? = nil
+		for i = #trail, 1, -1 do
+			if trail[i].t <= target then
+				lagged = trail[i].p
+				break
+			end
+		end
+		if lagged then
+			if not last then
+				last = lagged
+			elseif ((lagged - last :: Vector3) * Vector3.new(1, 0, 1)).Magnitude >= 4.2 then
+				last = lagged
+				Audio:Play(
+					"FootstepLino",
+					lagged - Vector3.new(0, 2.8, 0),
+					{ Bus = "Echo", Volume = 0.8, Curve = "Footstep" }
+				)
+				firstStep = firstStep or lagged
+			end
+		end
+		RunService.Heartbeat:Wait()
+	end
+	watchNoticed(p.Token, firstStep, 1)
+end
+
+Presenters.EchoObject = function(p)
+	local door = Doors:FindDoor(p.Opening)
+	if door then
+		Doors:PlayLocal(door, { true, false }, 2.2)
+		Audio:Play("DoorOpen", door:GetPivot().Position, { Bus = "Echo" })
+		task.delay(2.2, function()
+			Audio:Play("DoorClose", door:GetPivot().Position, { Bus = "Echo" })
+		end)
+		watchNoticed(p.Token, door:GetPivot().Position, 4)
+	end
+end
+
+Presenters.EchoLight = function(p)
+	local path = EchoCodec.Decode(p.Path)
+	local cfs = worldPath(path)
+	local carrier = Instance.new("Part")
+	carrier.Name = "EchoLight"
+	carrier.Anchored = true
+	carrier.CanCollide = false
+	carrier.CanQuery = false
+	carrier.Transparency = 1
+	carrier.Size = Vector3.new(0.2, 0.2, 0.2)
+	carrier.Parent = Workspace
+	local spot = Instance.new("SpotLight")
+	spot.Angle = 42
+	spot.Range = 48
+	spot.Brightness = 2
+	spot.Color = Color3.fromRGB(255, 244, 225)
+	spot.Face = Enum.NormalId.Front
+	spot.Parent = carrier
+	watchNoticed(p.Token, cfs[1].Position, 4)
+	walkPath(cfs, path.Interval, function(cf, i)
+		local s = path.Samples[i]
+		spot.Enabled = bit32.band(s.Flags, EchoCodec.Flags.Flashlight) ~= 0
+		-- Beam at head height, sweeping where you were looking.
+		carrier.CFrame = cf * CFrame.new(0.4, 1.6, -0.6)
+	end)
+	carrier:Destroy()
+end
+
+Presenters.EchoFigure = function(p)
+	local path = EchoCodec.Decode(p.Path)
+	local fig = makeFigure(p.UserId)
+	if not fig then
+		return
+	end
+	local cfs = worldPath(path)
+	fig:PivotTo(cfs[1])
+	fig.Parent = Workspace
+	local h = fig:FindFirstChildOfClass("Humanoid")
+	local animator = h and h:FindFirstChildOfClass("Animator")
+	local track: AnimationTrack? = nil
+	if animator then
+		local a = Instance.new("Animation")
+		a.AnimationId = AssetIds.Animations.Walk
+		local ok, t = pcall(function()
+			return animator:LoadAnimation(a)
+		end)
+		if ok then
+			track = t
+			t:Play(0.1)
+		end
+	end
+	watchNoticed(p.Token, cfs[1].Position, 5)
+	local lastStep = cfs[1].Position
+	walkPath(cfs, path.Interval, function(cf)
+		fig:PivotTo(cf)
+		if (cf.Position - lastStep).Magnitude >= 4.2 then
+			lastStep = cf.Position
+			Audio:Play(
+				"FootstepLino",
+				cf.Position - Vector3.new(0, 2.8, 0),
+				{ Bus = "Echo", Volume = 0.7, Curve = "Footstep" }
+			)
+		end
+	end)
+	if track then
+		track:Stop()
+	end
+	fig:Destroy()
+end
+
+Presenters.Silence = function(p)
+	Audio:Silence(p.Duration)
+end
+
+Presenters.Fake = function(p)
+	for i = 1, p.Repeat or 1 do
+		Audio:Play(p.Sound, p.Position, { Bus = "World", Curve = "Far" })
+		task.wait(if p.Sound == "DoorKnock" then 0.45 else 0.75)
+	end
+	UI:Caption(p.Sound, p.Position)
+	watchNoticed(p.Token, p.Position, 3)
+end
+
+Presenters.Lodger = function(p)
+	-- The rig itself is server-side and replicated; the presentation controller handles its sounds.
+	if p.First then
+		Audio:Silence(25)
+	end
+end
+
+Presenters.LiftKnock = function(p)
+	task.wait(p.Delay or 3)
+	for _ = 1, p.Repeat or 2 do
+		Audio:Play("DoorKnock", p.Position, { Bus = "Echo" })
+		task.wait(0.5)
+	end
+	UI:Caption("DoorKnock", p.Position)
+end
+
+function EchoController:Init(registry)
+	Audio = registry.AudioController
+	Doors = registry.DoorController
+	UI = registry.UIController
+end
+
+function EchoController:Start()
+	RunService.Heartbeat:Connect(function()
+		local c = player.Character
+		local root = c and c:FindFirstChild("HumanoidRootPart") :: BasePart?
+		if root then
+			local now = os.clock()
+			table.insert(trail, { t = now, p = root.Position })
+			while trail[1] and now - trail[1].t > 5 do
+				table.remove(trail, 1)
+			end
+		end
+	end)
+	Net.OnClient("EventPlay", function(p: Payload)
+		local fn = Presenters[p.Category]
+		if fn then
+			task.spawn(fn, p)
+		else
+			warn("[Echo] no presenter for " .. tostring(p.Category))
+		end
+	end)
+end
+
+return EchoController
+]]></string>
+            </Properties>
+          </Item>
+          <Item class="ModuleScript" referent="63">
+            <Properties>
+              <string name="Name">FlashlightController</string>
+              <string name="Source"><![CDATA[--!strict
+-- F toggles the flashlight. The light itself lives on the server (everyone sees your beam);
+-- the local copy is switched instantly so input feels immediate. Also reports look direction at 4 Hz.
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local Workspace = game:GetService("Workspace")
+
+local Shared = game:GetService("ReplicatedStorage"):WaitForChild("Shared")
+local Net = require(Shared.Net)
+
+local FlashlightController = {}
+local on = false
+local Settings: any
+local Audio: any
+local player = Players.LocalPlayer
+
+local function light(): SpotLight?
+	local c = player.Character
+	local l = c and c:FindFirstChild("Flashlight", true)
+	return if l and l:IsA("SpotLight") then l else nil
+end
+
+local function apply()
+	local l = light()
+	if l then
+		l.Enabled = on
+		l.Shadows = Settings.Tier.FlashlightShadows
+	end
+end
+
+function FlashlightController:IsOn(): boolean
+	return on
+end
+
+function FlashlightController:Toggle()
+	on = not on
+	apply()
+	Audio:Play("FlashlightClick", nil, { Bus = "Player", Volume = 0.5 })
+	Net.FireServer("Flashlight", on)
+end
+
+function FlashlightController:Init(registry)
+	Settings = registry.SettingsController
+	Audio = registry.AudioController
+end
+
+function FlashlightController:Start()
+	UserInputService.InputBegan:Connect(function(input, processed)
+		if not processed and input.KeyCode == Enum.KeyCode.F then
+			self:Toggle()
+		end
+	end)
+	player.CharacterAdded:Connect(function(c)
+		c:WaitForChild("Head"):WaitForChild("FlashlightAttachment", 10)
+		apply()
+	end)
+	Settings.Changed:Connect(apply)
+	-- Aim the beam where the camera looks, every frame (local only; others see it follow the head).
+	RunService.RenderStepped:Connect(function()
+		local cam = Workspace.CurrentCamera
+		local c = player.Character
+		local head = c and c:FindFirstChild("Head") :: BasePart?
+		local att = head and head:FindFirstChild("FlashlightAttachment") :: Attachment?
+		if att and cam then
+			att.WorldCFrame = CFrame.lookAt(att.WorldPosition, att.WorldPosition + cam.CFrame.LookVector)
+		end
+	end)
+	task.spawn(function()
+		while true do
+			task.wait(0.25)
+			local cam = Workspace.CurrentCamera
+			if cam then
+				Net.FireServer("Look", cam.CFrame.LookVector)
+			end
+		end
+	end)
+end
+
+return FlashlightController
+]]></string>
+            </Properties>
+          </Item>
+          <Item class="ModuleScript" referent="64">
+            <Properties>
+              <string name="Name">FootprintController</string>
+              <string name="Source"><![CDATA[--!strict
+--[[
+	Shows wear diegetically (plan §D.1): scuffed footprints in the dust. Each footstep leaves a print,
+	and every print in a cell fades with that cell's wear, so clean dust really looks clean.
+	Client-only, pooled, capped per quality tier.
+	TODO(art pass): decal texture + reveal only in grazing flashlight light.
+]]
+local Workspace = game:GetService("Workspace")
+
+local Shared = game:GetService("ReplicatedStorage"):WaitForChild("Shared")
+local CellGraph = require(Shared.Logic.CellGraph)
+local Layout = require(Shared.Config.LevelLayout)
+local LayoutSpace = require(Shared.Util.LayoutSpace)
+local Net = require(Shared.Net)
+local WearMath = require(Shared.Logic.WearMath)
+
+local FootprintController = {}
+
+type Print = { Part: Part, Cell: string }
+local graph = CellGraph.Build(Layout)
+local prints: { Print } = {}
+local pool: { Part } = {}
+local wear: { [string]: number } = {}
+local side: { [Model]: number } = {}
+local folder: Folder
+local Settings: any
+local Movement: any
+
+local function alphaFor(cell: string): number
+	local w = wear[cell] or 0
+	-- Invisible on clean dust, clearly scuffed from about 0.5 wear.
+	return 1 - math.clamp(w * 1.5, 0, 0.7)
+end
+
+local function take(): Part
+	local p = table.remove(pool)
+	if p then
+		return p
+	end
+	local n = Instance.new("Part")
+	n.Name = "Footprint"
+	n.Anchored = true
+	n.CanCollide = false
+	n.CanQuery = false
+	n.CanTouch = false
+	n.CastShadow = false
+	n.AudioCanCollide = false
+	n.Material = Enum.Material.SmoothPlastic
+	n.Color = Color3.fromRGB(38, 36, 33)
+	n.Size = Vector3.new(0.55, 0.04, 1.1)
+	return n
+end
+
+local function onStep(character: Model, foot: Vector3)
+	local l = LayoutSpace.ToLocal(foot)
+	local cell = CellGraph.CellAt(graph, l.X, l.Z)
+	if not cell then
+		return
+	end
+	local root = character:FindFirstChild("HumanoidRootPart") :: BasePart?
+	if not root then
+		return
+	end
+	local s = (side[character] or 1) * -1
+	side[character] = s
+	local look = root.CFrame.LookVector * Vector3.new(1, 0, 1)
+	if look.Magnitude < 0.01 then
+		return
+	end
+	local floorY = LayoutSpace.Origin.Y + 0.03
+	local base =
+		CFrame.lookAt(Vector3.new(foot.X, floorY, foot.Z), Vector3.new(foot.X, floorY, foot.Z) + look.Unit)
+	local p = take()
+	p.CFrame = base * CFrame.new(s * 0.45, 0, 0)
+	p.Transparency = alphaFor(cell)
+	p.Parent = folder
+	table.insert(prints, { Part = p, Cell = cell })
+	local cap = Settings.Tier.FootprintCap
+	while #prints > cap do
+		local old = table.remove(prints, 1) :: Print
+		old.Part.Parent = nil
+		table.insert(pool, old.Part)
+	end
+end
+
+function FootprintController:Init(registry)
+	Settings = registry.SettingsController
+	Movement = registry.MovementController
+	local f = Instance.new("Folder")
+	f.Name = "Footprints"
+	f.Parent = Workspace
+	folder = f
+end
+
+function FootprintController:Start()
+	Movement.Step:Connect(onStep)
+	Net.OnClient("WearSnapshot", function(bytes: { [string]: number })
+		for id, b in bytes do
+			wear[id] = WearMath.FromByte(b)
+		end
+		for _, pr in prints do
+			pr.Part.Transparency = alphaFor(pr.Cell)
+		end
+	end)
+end
+
+function FootprintController:GetWear(cell: string): number
+	return wear[cell] or 0
+end
+
+return FootprintController
+]]></string>
+            </Properties>
+          </Item>
+          <Item class="ModuleScript" referent="65">
+            <Properties>
+              <string name="Name">InteractionController</string>
+              <string name="Source"><![CDATA[--!strict
+--[[
+	Looks at what's under the crosshair. E = use, Q = knock (doors), hold E on plastic sheeting.
+	No floating prompts on PC; the UI shows a small hint line under the crosshair.
+	TODO(mobile): touch buttons via ContextActionService before mobile testing.
+]]
+local CollectionService = game:GetService("CollectionService")
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local Workspace = game:GetService("Workspace")
+
+local Shared = game:GetService("ReplicatedStorage"):WaitForChild("Shared")
+local Net = require(Shared.Net)
+local PlayerConfig = require(Shared.Config.PlayerConfig)
+
+local InteractionController = {}
+
+type Focus = { Target: any, Kind: string, Hint: string }
+local focus: Focus? = nil
+local holding: Instance? = nil
+local UI: any
+
+local params = RaycastParams.new()
+params.FilterType = Enum.RaycastFilterType.Exclude
+
+local function describe(hit: Instance): Focus?
+	local model = hit:FindFirstAncestorOfClass("Model")
+	if model and CollectionService:HasTag(model, "Door") then
+		local kind = model:GetAttribute("Kind") :: string
+		local label = (model:GetAttribute("Label") :: string?) or ""
+		if kind == "Fake" then
+			return { Target = model, Kind = "Fake", Hint = "[Q] Knock  " .. label }
+		elseif kind == "Plastic" then
+			if model:GetAttribute("Open") then
+				return nil
+			end
+			return { Target = model, Kind = "Plastic", Hint = "[Hold E] Cut the plastic  " .. label }
+		elseif kind == "Lift" then
+			return {
+				Target = model,
+				Kind = "Lift",
+				Hint = if model:GetAttribute("Locked") then "No power" else "",
+			}
+		end
+		local open = model:GetAttribute("Open") == true
+		return {
+			Target = model,
+			Kind = "Door",
+			Hint = (if open then "[E] Close" else "[E] Open") .. "   [Q] Knock  " .. label,
+		}
+	end
+	if hit:IsA("BasePart") and CollectionService:HasTag(hit, "Interactable") then
+		local kind = hit:GetAttribute("InteractKind") :: string
+		local hints =
+			{ Note = "[E] Read", Tape = "[E] Play tape", Item = "[E] Take", FuseBox = "[E] Fuse box" }
+		return { Target = hit, Kind = kind, Hint = hints[kind] or "[E]" }
+	end
+	return nil
+end
+
+local function update()
+	local cam = Workspace.CurrentCamera
+	local character = Players.LocalPlayer.Character
+	if not cam or not character then
+		focus = nil
+		return
+	end
+	params.FilterDescendantsInstances = { character }
+	local origin = cam.CFrame.Position
+	local hit = Workspace:Raycast(origin, cam.CFrame.LookVector * PlayerConfig.InteractDistance, params)
+	focus = if hit then describe(hit.Instance) else nil
+	UI:SetHint(if focus then focus.Hint else "")
+end
+
+function InteractionController:Init(registry)
+	UI = registry.UIController
+end
+
+function InteractionController:Start()
+	RunService.Heartbeat:Connect(update)
+	UserInputService.InputBegan:Connect(function(input, processed)
+		if processed or not focus then
+			return
+		end
+		local f = focus :: Focus
+		if input.KeyCode == Enum.KeyCode.E then
+			if f.Kind == "Plastic" then
+				holding = f.Target
+				Net.FireServer("HoldInteract", f.Target, "Begin")
+			elseif f.Kind ~= "Fake" and f.Kind ~= "Lift" then
+				Net.FireServer("Interact", f.Target, "Use")
+			end
+		elseif input.KeyCode == Enum.KeyCode.Q and (f.Kind == "Door" or f.Kind == "Fake") then
+			Net.FireServer("Interact", f.Target, "Knock")
+		end
+	end)
+	UserInputService.InputEnded:Connect(function(input)
+		if input.KeyCode == Enum.KeyCode.E and holding then
+			Net.FireServer("HoldInteract", holding, "End")
+			holding = nil
+		end
+	end)
+end
+
+return InteractionController
+]]></string>
+            </Properties>
+          </Item>
+          <Item class="ModuleScript" referent="66">
+            <Properties>
+              <string name="Name">LodgerPresentationController</string>
+              <string name="Source"><![CDATA[--!strict
+--[[
+	Local presentation of the Lodger (plan §M layer 7): its footsteps land a fraction late,
+	a wet inhale when it deviates, breathing while it waits at the edge of clean dust.
+]]
+local CollectionService = game:GetService("CollectionService")
+local RunService = game:GetService("RunService")
+
+local LodgerPresentationController = {}
+local Audio: any
+
+local FOOTSTEP_LAG = 0.18
+
+local function track(model: Instance)
+	if not model:IsA("Model") then
+		return
+	end
+	local root = model:WaitForChild("HumanoidRootPart", 5) :: BasePart?
+	if not root then
+		return
+	end
+	local last = root.Position
+	local breath: AudioPlayer? = nil
+	local conn = RunService.Heartbeat:Connect(function()
+		if not root.Parent then
+			return
+		end
+		local pos = root.Position
+		if ((pos - last) * Vector3.new(1, 0, 1)).Magnitude >= 4.6 then
+			last = pos
+			local at = pos - Vector3.new(0, 2.8, 0)
+			task.delay(FOOTSTEP_LAG, function()
+				Audio:Play(
+					"FootstepLino",
+					at,
+					{ Bus = "Lodger", Volume = 0.9, Speed = 0.92, Curve = "Footstep" }
+				)
+			end)
+		end
+	end)
+	model:GetAttributeChangedSignal("State"):Connect(function()
+		local s = model:GetAttribute("State")
+		if s == "Deviate" then
+			Audio:Play("LodgerInhale", root, { Bus = "Lodger" })
+		end
+		if s == "Search" and not breath then
+			breath = Audio:Play("Breath", root, { Bus = "Lodger", Looping = true, Volume = 0.6 })
+		elseif s ~= "Search" and breath then
+			Audio:Stop(breath)
+			breath = nil
+		end
+	end)
+	model.Destroying:Connect(function()
+		conn:Disconnect()
+		if breath then
+			Audio:Stop(breath)
+		end
+	end)
+end
+
+function LodgerPresentationController:Init(registry)
+	Audio = registry.AudioController
+end
+
+function LodgerPresentationController:Start()
+	CollectionService:GetInstanceAddedSignal("Lodger"):Connect(track)
+	for _, m in CollectionService:GetTagged("Lodger") do
+		task.spawn(track, m)
+	end
+end
+
+return LodgerPresentationController
+]]></string>
+            </Properties>
+          </Item>
+          <Item class="ModuleScript" referent="67">
+            <Properties>
+              <string name="Name">MovementController</string>
+              <string name="Source"><![CDATA[--!strict
+--[[
+	Walk / run (hold Shift) / crouch (C or Ctrl). The server sets the actual speed (PlayerService),
+	this only requests a stance. Also plays footsteps for every character, by floor type.
+]]
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+
+local Shared = game:GetService("ReplicatedStorage"):WaitForChild("Shared")
+local Net = require(Shared.Net)
+local Signal = require(Shared.Util.Signal)
+
+local MovementController = {}
+-- (character, world position) each time any character plants a foot. Used by footprints.
+MovementController.Step = Signal.new() :: Signal.Signal<Model, Vector3>
+
+local stance = "Walk"
+local runHeld = false
+local crouchOn = false
+local Audio: any
+
+local STEP_DISTANCE = { Walk = 4.2, Run = 5.4, Crouch = 3.4 }
+local lastStepPos: { [Model]: Vector3 } = {}
+
+local function setStance(s: string)
+	if s ~= stance then
+		stance = s
+		Net.FireServer("Stance", s)
+	end
+end
+
+local function refresh()
+	if crouchOn then
+		setStance("Crouch")
+	elseif runHeld then
+		setStance("Run")
+	else
+		setStance("Walk")
+	end
+end
+
+function MovementController:GetStance(): string
+	return stance
+end
+
+local function footstepKey(character: Model): string
+	local cell = nil
+	local owner = Players:GetPlayerFromCharacter(character)
+	if owner then
+		cell = owner:GetAttribute("Cell")
+	end
+	if cell == "R4E" then
+		return "FootstepWater"
+	elseif cell == "StairA" or cell == "Laundry" or cell == "Closet" then
+		return "FootstepConcrete"
+	end
+	return "FootstepLino"
+end
+
+local function stepCharacters()
+	for _, plr in Players:GetPlayers() do
+		local c = plr.Character
+		local root = c and c:FindFirstChild("HumanoidRootPart") :: BasePart?
+		local h = c and c:FindFirstChildOfClass("Humanoid")
+		if c and root and h and h.FloorMaterial ~= Enum.Material.Air then
+			local pos = root.Position
+			local last = lastStepPos[c]
+			local s = (c:GetAttribute("Stance") :: string?) or "Walk"
+			local dist = (STEP_DISTANCE :: any)[s] or 4.2
+			if not last then
+				lastStepPos[c] = pos
+			elseif ((pos - last) * Vector3.new(1, 0, 1)).Magnitude >= dist then
+				lastStepPos[c] = pos
+				local foot = pos - Vector3.new(0, 2.8, 0)
+				local vol = if s == "Run" then 1 elseif s == "Crouch" then 0.35 else 0.65
+				local isLocal = plr == Players.LocalPlayer
+				Audio:Play(footstepKey(c), if isLocal then nil else foot, {
+					Bus = "Player",
+					Volume = vol * (if isLocal then 0.7 else 1),
+					Speed = 0.9 + math.random() * 0.2,
+					Curve = "Footstep",
+				})
+				MovementController.Step:Fire(c, foot)
+			end
+		end
+	end
+end
+
+function MovementController:Init(registry)
+	Audio = registry.AudioController
+end
+
+function MovementController:Start()
+	UserInputService.InputBegan:Connect(function(input, processed)
+		if processed then
+			return
+		end
+		if input.KeyCode == Enum.KeyCode.LeftShift then
+			runHeld = true
+			refresh()
+		elseif input.KeyCode == Enum.KeyCode.C or input.KeyCode == Enum.KeyCode.LeftControl then
+			crouchOn = not crouchOn
+			refresh()
+		end
+	end)
+	UserInputService.InputEnded:Connect(function(input)
+		if input.KeyCode == Enum.KeyCode.LeftShift then
+			runHeld = false
+			refresh()
+		end
+	end)
+	Players.LocalPlayer.CharacterAdded:Connect(function()
+		crouchOn = false
+		runHeld = false
+		stance = ""
+		refresh()
+	end)
+	RunService.Heartbeat:Connect(stepCharacters)
+end
+
+return MovementController
+]]></string>
+            </Properties>
+          </Item>
+          <Item class="ModuleScript" referent="68">
+            <Properties>
+              <string name="Name">SettingsController</string>
+              <string name="Source"><![CDATA[--!strict
+-- Picks the quality tier (plan §O) and holds accessibility toggles. Overridable from the pause menu later.
+local UserInputService = game:GetService("UserInputService")
+
+local Shared = game:GetService("ReplicatedStorage"):WaitForChild("Shared")
+local QualityTiers = require(Shared.Config.QualityTiers)
+local Signal = require(Shared.Util.Signal)
+
+local SettingsController = {}
+SettingsController.Changed = Signal.new() :: Signal.Signal<>
+SettingsController.TierName = "Medium" :: QualityTiers.Tier
+SettingsController.Tier = QualityTiers.Medium
+SettingsController.HeadBob = true
+SettingsController.ReduceFlashing = false
+SettingsController.Subtitles = true
+
+local function detectTier(): QualityTiers.Tier
+	local ok, level = pcall(function()
+		return UserSettings():GetService("UserGameSettings").SavedQualityLevel
+	end)
+	local touch = UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
+	if ok and level ~= Enum.SavedQualitySetting.Automatic then
+		local n = tonumber(string.match(level.Name, "%d+")) or 5
+		if n <= 3 then
+			return "Low"
+		elseif n >= 8 then
+			return "High"
+		end
+		return "Medium"
+	end
+	return if touch then "Low" else "Medium"
+end
+
+function SettingsController:SetTier(name: QualityTiers.Tier)
+	self.TierName = name
+	self.Tier = (QualityTiers :: any)[name]
+	self.Changed:Fire()
+end
+
+function SettingsController:Init()
+	self:SetTier(detectTier())
+end
+
+return SettingsController
+]]></string>
+            </Properties>
+          </Item>
+          <Item class="ModuleScript" referent="69">
+            <Properties>
+              <string name="Name">UIController</string>
+              <string name="Source"><![CDATA[--!strict
+--[[
+	Minimal UI (plan §F): crosshair dot, interaction hint, subtitles with direction, notes,
+	Theo's clipboard (Tab), the Taken sequence, end card, and a Studio-only debug overlay (F2).
+]]
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local TweenService = game:GetService("TweenService")
+local UserInputService = game:GetService("UserInputService")
+local Workspace = game:GetService("Workspace")
+
+local Shared = game:GetService("ReplicatedStorage"):WaitForChild("Shared")
+local Net = require(Shared.Net)
+
+local UIController = {}
+
+local player = Players.LocalPlayer
+local Settings: any
+local Camera: any
+local gui: ScreenGui
+local hint: TextLabel
+local subtitle: TextLabel
+local note: TextLabel
+local clipboard: TextLabel
+local fade: Frame
+local card: TextLabel
+local debugLabel: TextLabel
+local subtitleToken = 0
+local objective = { Text = "", Fuses = 0, Needs = 2, Visible = false }
+
+local FONT = Font.new("rbxasset://fonts/families/SourceSansPro.json")
+
+local CAPTIONS: { [string]: string } = {
+	DoorKnock = "knocking",
+	FootstepConcrete = "footsteps",
+	FootstepLino = "footsteps",
+	DoorOpen = "a door opens",
+	DoorClose = "a door closes",
+}
+
+local function label(name: string, props: { [string]: any }): TextLabel
+	local l = Instance.new("TextLabel")
+	l.Name = name
+	l.BackgroundTransparency = 1
+	l.TextColor3 = Color3.fromRGB(225, 225, 215)
+	l.FontFace = FONT
+	l.TextWrapped = true
+	for k, v in props do
+		(l :: any)[k] = v
+	end
+	l.Parent = gui
+	return l
+end
+
+local function direction(pos: Vector3): string
+	local cam = Workspace.CurrentCamera
+	if not cam then
+		return ""
+	end
+	local rel = cam.CFrame:PointToObjectSpace(pos)
+	local dist = rel.Magnitude
+	local where
+	if rel.Z > 0 and math.abs(rel.X) < rel.Z then
+		where = "behind you"
+	elseif math.abs(rel.X) > math.abs(rel.Z) then
+		where = if rel.X > 0 then "to your right" else "to your left"
+	else
+		where = "ahead"
+	end
+	if pos.Y - cam.CFrame.Position.Y > 6 then
+		where = "above you"
+	end
+	local near = if dist < 12 then "close" elseif dist < 40 then "" else "far"
+	return where .. (if near ~= "" then ", " .. near else "")
+end
+
+function UIController:SetHint(text: string)
+	if hint.Text ~= text then
+		hint.Text = text
+	end
+end
+
+function UIController:ShowSubtitle(text: string, seconds: number)
+	if not Settings.Subtitles then
+		return
+	end
+	subtitleToken += 1
+	local my = subtitleToken
+	subtitle.Text = text
+	subtitle.TextTransparency = 0
+	task.delay(seconds, function()
+		if subtitleToken == my then
+			TweenService:Create(subtitle, TweenInfo.new(0.6), { TextTransparency = 1 }):Play()
+		end
+	end)
+end
+
+-- Non-speech caption with direction, e.g. "[knocking, behind you, close]".
+function UIController:Caption(soundKey: string, pos: Vector3?)
+	local what = CAPTIONS[soundKey] or soundKey
+	local where = if pos then direction(pos) else ""
+	self:ShowSubtitle("[" .. what .. (if where ~= "" then ", " .. where else "") .. "]", 3)
+end
+
+local function showNote(text: string)
+	note.Text = text
+	note.Visible = true
+	task.delay(7, function()
+		if note.Text == text then
+			note.Visible = false
+		end
+	end)
+end
+
+local function refreshClipboard()
+	clipboard.Text =
+		string.format("THEO'S LIST\n\n%s\n\nFuses: %d / %d", objective.Text, objective.Fuses, objective.Needs)
+end
+
+local function takenSequence()
+	-- The Lodger takes your place: the camera drifts back while "you" walk away. No gore (§D.3).
+	Camera.Scripted = true
+	local cam = Workspace.CurrentCamera
+	local start = cam.CFrame
+	cam.CameraType = Enum.CameraType.Scriptable
+	TweenService
+		:Create(cam, TweenInfo.new(3.5, Enum.EasingStyle.Sine), { CFrame = start * CFrame.new(0, 1.2, 7) })
+		:Play()
+	TweenService:Create(fade, TweenInfo.new(3.5), { BackgroundTransparency = 0 }):Play()
+	player.CharacterAdded:Wait()
+	task.wait(0.3)
+	cam.CameraType = Enum.CameraType.Custom
+	Camera.Scripted = false
+	TweenService:Create(fade, TweenInfo.new(2), { BackgroundTransparency = 1 }):Play()
+end
+
+function UIController:Init(registry)
+	Settings = registry.SettingsController
+	Camera = registry.CameraController
+	local g = Instance.new("ScreenGui")
+	g.Name = "AfterYouUI"
+	g.ResetOnSpawn = false
+	g.IgnoreGuiInset = true
+	g.Parent = player:WaitForChild("PlayerGui")
+	gui = g
+
+	local dot = Instance.new("Frame")
+	dot.Name = "Crosshair"
+	dot.AnchorPoint = Vector2.new(0.5, 0.5)
+	dot.Position = UDim2.fromScale(0.5, 0.5)
+	dot.Size = UDim2.fromOffset(4, 4)
+	dot.BackgroundColor3 = Color3.new(1, 1, 1)
+	dot.BackgroundTransparency = 0.5
+	dot.BorderSizePixel = 0
+	local corner = Instance.new("UICorner")
+	corner.CornerRadius = UDim.new(1, 0)
+	corner.Parent = dot
+	dot.Parent = gui
+
+	hint = label("Hint", {
+		AnchorPoint = Vector2.new(0.5, 0),
+		Position = UDim2.new(0.5, 0, 0.5, 18),
+		Size = UDim2.fromOffset(420, 22),
+		TextSize = 16,
+		TextTransparency = 0.2,
+	})
+	subtitle = label("Subtitle", {
+		AnchorPoint = Vector2.new(0.5, 1),
+		Position = UDim2.new(0.5, 0, 1, -60),
+		Size = UDim2.new(0.7, 0, 0, 60),
+		TextSize = 22,
+		TextTransparency = 1,
+		TextStrokeTransparency = 0.4,
+	})
+	note = label("Note", {
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.5, 0.4),
+		Size = UDim2.fromOffset(460, 160),
+		TextSize = 22,
+		BackgroundTransparency = 0.1,
+		BackgroundColor3 = Color3.fromRGB(226, 220, 198),
+		TextColor3 = Color3.fromRGB(40, 36, 30),
+		Visible = false,
+	})
+	clipboard = label("Clipboard", {
+		AnchorPoint = Vector2.new(1, 0),
+		Position = UDim2.new(1, -24, 0, 24),
+		Size = UDim2.fromOffset(300, 140),
+		TextSize = 18,
+		BackgroundTransparency = 0.15,
+		BackgroundColor3 = Color3.fromRGB(226, 220, 198),
+		TextColor3 = Color3.fromRGB(40, 36, 30),
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextYAlignment = Enum.TextYAlignment.Top,
+		Visible = false,
+	})
+	local pad = Instance.new("UIPadding")
+	pad.PaddingLeft = UDim.new(0, 12)
+	pad.PaddingTop = UDim.new(0, 10)
+	pad.Parent = clipboard
+	fade = Instance.new("Frame")
+	fade.Name = "Fade"
+	fade.Size = UDim2.fromScale(1, 1)
+	fade.BackgroundColor3 = Color3.new(0, 0, 0)
+	fade.BackgroundTransparency = 1
+	fade.BorderSizePixel = 0
+	fade.ZIndex = 10
+	fade.Parent = gui
+	card = label("Card", {
+		Size = UDim2.fromScale(1, 1),
+		TextSize = 40,
+		TextTransparency = 1,
+		ZIndex = 11,
+		Text = "AFTER YOU\n\nend of the greybox slice",
+	})
+	debugLabel = label("Debug", {
+		Position = UDim2.fromOffset(12, 60),
+		Size = UDim2.fromOffset(420, 520),
+		TextSize = 14,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextYAlignment = Enum.TextYAlignment.Top,
+		Font = Enum.Font.Code,
+		BackgroundTransparency = 0.4,
+		BackgroundColor3 = Color3.new(0, 0, 0),
+		Visible = false,
+	})
+end
+
+function UIController:Start()
+	Net.OnClient("Subtitle", function(p)
+		if p.Kind == "Note" then
+			showNote(p.Text)
+		elseif p.Kind == "Hint" then
+			self:ShowSubtitle(p.Text, 3)
+		elseif p.Kind == "Tape" then
+			-- Only players near the tape hear it.
+			local cam = Workspace.CurrentCamera
+			if p.Position and cam and (p.Position - cam.CFrame.Position).Magnitude > 40 then
+				return
+			end
+			for _, line in p.Lines do
+				task.delay(line.At, function()
+					self:ShowSubtitle(p.Speaker .. ": " .. line.Text, 4)
+				end)
+			end
+		end
+	end)
+	Net.OnClient("Objective", function(p)
+		objective = p
+		refreshClipboard()
+	end)
+	Net.OnClient("Taken", function()
+		task.spawn(takenSequence)
+	end)
+	Net.OnClient("SliceEnd", function()
+		TweenService:Create(fade, TweenInfo.new(2), { BackgroundTransparency = 0 }):Play()
+		task.wait(2)
+		TweenService:Create(card, TweenInfo.new(2), { TextTransparency = 0 }):Play()
+	end)
+	UserInputService.InputBegan:Connect(function(input, processed)
+		if processed then
+			return
+		end
+		if input.KeyCode == Enum.KeyCode.Tab and objective.Visible then
+			clipboard.Visible = not clipboard.Visible
+		elseif input.KeyCode == Enum.KeyCode.F2 and RunService:IsStudio() then
+			debugLabel.Visible = not debugLabel.Visible
+		end
+	end)
+	Net.OnClient("DebugState", function(d)
+		if not debugLabel.Visible then
+			return
+		end
+		local lines = {
+			string.format(
+				"PACING %s  %ds/%ds  tension %d",
+				d.Pacing,
+				d.PacingTime,
+				d.PacingDuration,
+				d.Tension
+			),
+			string.format("cell %s   lodger %s   progress %.2f", tostring(d.Cell), d.Lodger, d.Progress),
+			"",
+			"WEAR (0-255, lodger >= 64)",
+		}
+		local ids = {}
+		for id in d.Wear do
+			table.insert(ids, id)
+		end
+		table.sort(ids)
+		for _, id in ids do
+			local b = d.Wear[id]
+			table.insert(lines, string.format("  %-8s %3d %s", id, b, string.rep("#", math.floor(b / 16))))
+		end
+		table.insert(lines, "")
+		table.insert(lines, "EVENTS")
+		local evs = {}
+		for id in d.Events do
+			table.insert(evs, id)
+		end
+		table.sort(evs)
+		for _, id in evs do
+			table.insert(lines, string.format("  %-14s %s", id, d.Events[id]))
+		end
+		debugLabel.Text = table.concat(lines, "\n")
+	end)
+end
+
+return UIController
+]]></string>
+            </Properties>
+          </Item>
+        </Item>
+      </Item>
+    </Item>
+  </Item>
+  <Item class="Workspace" referent="70">
+    <Properties>
+      <string name="Name">Workspace</string>
+      <bool name="FilteringEnabled">true</bool>
+      <bool name="NeedsPivotMigration">false</bool>
+    </Properties>
+  </Item>
+</roblox>

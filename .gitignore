@@ -1,0 +1,4 @@
+sourcemap.json
+globalTypes.d.luau
+*.rbxl.lock
+*.rbxlx.lock
